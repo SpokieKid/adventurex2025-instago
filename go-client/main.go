@@ -373,7 +373,7 @@ func main() {
 		QwenTextAPIKey: getEnv("QWEN_TEXT_API_KEY", ""),
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
 		DBPath:         getEnv("DB_PATH", "./instago.db"),
-		Port:           getEnv("PORT", "8889"),
+		Port:           getEnv("PORT", "8080"),
 	}
 
 	// 初始化数据库
