@@ -117,9 +117,9 @@ go build -o instago
 }
 ```
 
-### 3. 文件夹管理 `POST /folder`
+### 3. 文件夹管理
 
-**创建文件夹**:
+**创建文件夹** `POST /folder`:
 ```json
 {
   "name": "风景照片",
@@ -127,11 +127,36 @@ go build -o instago
 }
 ```
 
-**更新文件夹** (添加查询参数 `?id=文件夹ID`):
+**响应**:
+```json
+{
+  "message": "Folder created successfully",
+  "id": 新文件夹ID
+}
+```
+
+**更新文件夹** `POST /folder?id=文件夹ID`:
 ```json
 {
   "name": "新名称",
   "upper": 1
+}
+```
+
+**响应**:
+```json
+{
+  "message": "Folder updated successfully",
+  "id": 文件夹ID
+}
+```
+
+**删除文件夹** `DELETE /folder/:id`:
+
+**响应**:
+```json
+{
+  "message": "Folder deleted successfully"
 }
 ```
 
