@@ -97,18 +97,24 @@
     
     <!-- 上传图片测试 -->
     <div class="container api-section">
-        <h2>📤 上传图片</h2>
+        <h2>📤 上传截图</h2>
         <div class="form-group">
             <label for="imageFile">选择图片文件:</label>
             <input type="file" id="imageFile" accept="image/*">
         </div>
         <div class="form-group">
-            <label for="folderSelect">选择文件夹 (可选):</label>
-            <select id="folderSelect">
-                <option value="0">根文件夹</option>
-            </select>
+            <label for="screenshotTimestamp">截图时间戳 (可选):</label>
+            <input type="number" id="screenshotTimestamp" placeholder="Unix时间戳，留空则使用当前时间">
         </div>
-        <button onclick="uploadImage()">上传并分析图片</button>
+        <div class="form-group">
+            <label for="screenshotAppName">应用名称 (可选):</label>
+            <input type="text" id="screenshotAppName" placeholder="例如：Preview, Chrome, VSCode">
+        </div>
+        <div class="form-group">
+            <label for="screenshotTags">标签 (可选，最多16字符):</label>
+            <input type="text" id="screenshotTags" placeholder="例如：工作中, 学习" maxlength="16">
+        </div>
+        <button onclick="uploadImage()">上传并分析截图</button>
         <div id="uploadResult" class="result" style="display:none;"></div>
         <img id="imagePreview" class="image-preview" style="display:none;">
     </div>
@@ -174,10 +180,12 @@
             }
         }
 
-        // 上传图片
+        // 上传截图
         async function uploadImage() {
             const fileInput = document.getElementById('imageFile');
-            const folderSelect = document.getElementById('folderSelect');
+            const timestampInput = document.getElementById('screenshotTimestamp');
+            const appNameInput = document.getElementById('screenshotAppName');
+            const tagsInput = document.getElementById('screenshotTags');
             
             if (!fileInput.files[0]) {
                 showResult('uploadResult', '❌ 请选择一个图片文件', 'error');
@@ -195,27 +203,51 @@
                 preview.src = e.target.result;
                 preview.style.display = 'block';
                 
+                // 构建请求体
+                const requestBody = {
+                    screenshotFileBlob: base64
+                };
+                
+                // 添加可选字段
+                if (timestampInput.value) {
+                    requestBody.screenshotTimestamp = parseInt(timestampInput.value);
+                }
+                if (appNameInput.value.trim()) {
+                    requestBody.screenshotAppName = appNameInput.value.trim();
+                }
+                if (tagsInput.value.trim()) {
+                    requestBody.screenshotTags = tagsInput.value.trim();
+                }
+                
                 try {
                     const response = await fetch(`${API_BASE}/upload`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({
-                            image: base64,
-                            folder_id: parseInt(folderSelect.value)
-                        })
+                        body: JSON.stringify(requestBody)
                     });
                     
                     const data = await response.json();
                     
                     if (response.ok) {
-                        showResult('uploadResult', 
-                            `✅ 上传成功!\n` +
+                        let resultText = `✅ 上传成功!\n` +
                             `对象ID: ${data.object_id}\n` +
                             `文件夹ID: ${data.folder_id}\n` +
                             `描述: ${data.description}\n` +
-                            `摘要: ${data.digest}`, 'success');
+                            `摘要: ${data.digest}`;
+                        
+                        if (data.screenshot_timestamp) {
+                            resultText += `\n时间戳: ${data.screenshot_timestamp}`;
+                        }
+                        if (data.screenshot_app_name) {
+                            resultText += `\n应用名称: ${data.screenshot_app_name}`;
+                        }
+                        if (data.screenshot_tags) {
+                            resultText += `\n标签: ${data.screenshot_tags}`;
+                        }
+                        
+                        showResult('uploadResult', resultText, 'success');
                     } else {
                         showResult('uploadResult', `❌ 上传失败: ${data.error}`, 'error');
                     }
@@ -254,8 +286,9 @@
                 if (response.ok) {
                     let resultText = `✅ 搜索完成，找到 ${data.count} 个结果:\n\n`;
                     data.results.forEach((obj, index) => {
-                        resultText += `${index + 1}. 对象ID: ${obj.id}\n`;
+                        resultText += `${index + 1}. 对象ID: ${obj.object_id}\n`;
                         resultText += `   文件夹ID: ${obj.folder_id}\n`;
+                        resultText += `   相似度: ${(obj.similarity * 100).toFixed(2)}%\n`;
                         resultText += `   描述: ${obj.description.substring(0, 100)}...\n\n`;
                     });
                     showResult('searchResult', resultText, 'success');
@@ -381,20 +414,22 @@
 
         // 更新文件夹选择器
         function updateFolderSelects(folders) {
-            const selects = ['folderSelect', 'parentFolder'];
+            const selects = ['parentFolder'];
             selects.forEach(selectId => {
                 const select = document.getElementById(selectId);
-                // 保留根文件夹选项
-                select.innerHTML = '<option value="0">根文件夹</option>';
-                
-                folders.forEach(folder => {
-                    const option = document.createElement('option');
-                    option.value = folder.id;
-                    // 根据层级添加缩进
-                    const indent = '　'.repeat(folder.level); // 使用全角空格作为缩进
-                    option.textContent = indent + folder.name;
-                    select.appendChild(option);
-                });
+                if (select) {
+                    // 保留根文件夹选项
+                    select.innerHTML = '<option value="0">根文件夹</option>';
+                    
+                    folders.forEach(folder => {
+                        const option = document.createElement('option');
+                        option.value = folder.id;
+                        // 根据层级添加缩进
+                        const indent = '　'.repeat(folder.level); // 使用全角空格作为缩进
+                        option.textContent = indent + folder.name;
+                        select.appendChild(option);
+                    });
+                }
             });
             
             // 更新删除文件夹下拉框（不包含根文件夹）

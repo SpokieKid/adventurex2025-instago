@@ -1,0 +1,2266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstaGo - 智能图片管理系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            height: 100vh;
+            overflow: hidden;
+            color: #e4e6ea;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            background: rgba(15, 15, 35, 0.95);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .container.search-focused {
+            filter: blur(2px) brightness(0.7);
+        }
+
+        /* 左侧文件夹树 */
+        .sidebar {
+            width: 280px;
+            background: linear-gradient(180deg, #1e1e3f 0%, #2a2a4a 100%);
+            border-right: 1px solid #3a3a5a;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
+            position: relative;
+            z-index: 100;
+        }
+
+        .sidebar.collapsed {
+            width: 0;
+            overflow: hidden;
+            border-right: none;
+        }
+
+        /* 抽屉切换按钮 */
+        .drawer-toggle {
+            position: fixed;
+            top: 50%;
+            left: 280px;
+            transform: translateY(-50%);
+            z-index: 200;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 0;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            box-shadow: 2px 0 15px rgba(102, 126, 234, 0.3);
+            width: 24px;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+        }
+
+        .drawer-toggle:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            transform: translateY(-50%) translateX(3px);
+            box-shadow: 4px 0 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .drawer-toggle.sidebar-open {
+            left: 280px;
+        }
+
+        .drawer-toggle.sidebar-collapsed {
+            left: 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #2a2a4a 0%, #1e1e3f 100%);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .sidebar-title {
+            font-size: 18px;
+            font-weight: 600;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .sidebar-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .add-folder-btn, .delete-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 60px;
+        }
+
+        .delete-btn {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+        }
+
+        .add-folder-btn:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .delete-btn:hover {
+            background: linear-gradient(135deg, #ee5a52 0%, #ff6b6b 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        .folder-actions {
+            display: none;
+            gap: 4px;
+            margin-left: auto;
+        }
+
+        .folder-item:hover .folder-actions {
+            display: flex;
+        }
+
+        .action-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 10px;
+            transition: background 0.2s;
+        }
+
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .folder-item.active .action-btn {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .folder-item.active .action-btn:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .folder-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px 10px;
+        }
+
+        .folder-item {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-radius: 8px;
+            margin: 2px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+            color: #e4e6ea;
+            position: relative;
+        }
+        
+        .folder-actions {
+            position: absolute;
+            right: 8px;
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        
+        .action-icon {
+            padding: 4px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .action-icon:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.1);
+        }
+        
+        .rename-icon:hover {
+            background: rgba(76, 175, 80, 0.3);
+        }
+        
+        .delete-icon:hover {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        .folder-item:hover {
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateX(5px);
+            border-left-color: #667eea;
+        }
+
+        .folder-item.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-left-color: #ffffff;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .folder-icon {
+            font-size: 16px;
+        }
+
+        .file-item {
+            padding: 8px 16px 8px 32px;
+            cursor: pointer;
+            border-radius: 6px;
+            margin: 1px 0;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            color: #c4c6ca;
+            border-left: 3px solid transparent;
+        }
+
+        .file-item:hover {
+            background: rgba(102, 126, 234, 0.15);
+            transform: translateX(3px);
+            border-left-color: #667eea;
+        }
+
+        .file-item.active {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-left-color: #ffffff;
+            box-shadow: 0 3px 12px rgba(79, 172, 254, 0.3);
+        }
+
+        /* 主内容区域 */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+            transition: margin-left 0.3s ease;
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: 0;
+        }
+
+        /* 顶部搜索栏 */
+        .header {
+            padding: 20px;
+            background: linear-gradient(135deg, #2a2a4a 0%, #1e1e3f 100%);
+            border-bottom: 1px solid #3a3a5a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .search-container {
+            position: relative;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .search-box {
+            width: 300px;
+            padding: 14px 24px;
+            border: 2px solid #3a3a5a;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            transition: all 0.3s ease;
+            background: rgba(26, 26, 46, 0.8);
+            color: #e4e6ea;
+            backdrop-filter: blur(10px);
+        }
+
+        .search-box::placeholder {
+            color: #8a8a9a;
+        }
+
+        .search-box:focus {
+            border-color: #667eea;
+            background: rgba(26, 26, 46, 0.95);
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .search-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .search-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .search-overlay .search-box {
+            width: 500px;
+            padding: 20px 30px;
+            font-size: 20px;
+            border-radius: 30px;
+            box-shadow: 0 10px 40px rgba(0, 123, 255, 0.3);
+            border-color: #007bff;
+        }
+
+        /* 内容展示区域 */
+        .content-area {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+        }
+
+        .welcome-screen {
+            text-align: center;
+            padding: 60px 20px;
+            color: #c4c6ca;
+        }
+
+        .welcome-screen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
+        }
+
+        .welcome-screen p {
+            font-size: 18px;
+            line-height: 1.6;
+            color: #e4e6ea;
+        }
+
+        .markdown-content {
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.8;
+            color: #e4e6ea;
+        }
+
+        .markdown-content h1, .markdown-content h2, .markdown-content h3 {
+            margin-top: 30px;
+            margin-bottom: 15px;
+            color: #ffffff;
+        }
+
+        .markdown-content h1 {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .markdown-content h2 {
+            color: #667eea;
+        }
+
+        .markdown-content h3 {
+            color: #8a8a9a;
+        }
+
+        .markdown-content p {
+            margin-bottom: 15px;
+            color: #c4c6ca;
+        }
+
+        .markdown-content code {
+            background: rgba(26, 26, 46, 0.8);
+            color: #667eea;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            border: 1px solid #3a3a5a;
+        }
+
+        .markdown-content pre {
+            background: rgba(15, 15, 35, 0.9);
+            padding: 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            margin: 20px 0;
+            border: 1px solid #3a3a5a;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .markdown-content pre code {
+            background: none;
+            padding: 0;
+            border: none;
+            color: #e4e6ea;
+        }
+
+        /* 图片展示区域 */
+        .images-section {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 2px solid #3a3a5a;
+        }
+
+        .images-title {
+            font-size: 20px;
+            margin-bottom: 20px;
+            color: #ffffff;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .image-card {
+            background: linear-gradient(135deg, #1e1e3f 0%, #2a2a4a 100%);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            border: 1px solid #3a3a5a;
+        }
+
+        .image-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.3);
+            border-color: #667eea;
+        }
+
+        .image-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .image-card:hover img {
+            transform: scale(1.05);
+        }
+
+        .image-card-content {
+            padding: 15px;
+        }
+
+        .image-card-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .image-card-desc {
+            font-size: 12px;
+            color: #c4c6ca;
+            line-height: 1.4;
+        }
+
+        /* 搜索结果侧边栏 */
+        .search-sidebar {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            height: 100vh;
+            background: linear-gradient(180deg, #1e1e3f 0%, #2a2a4a 100%);
+            box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+            z-index: 1001;
+            transition: right 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(20px);
+        }
+
+        .search-sidebar.open {
+            right: 0;
+        }
+
+        .search-sidebar-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .search-sidebar-title {
+            font-size: 18px;
+            font-weight: 600;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .close-search-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 5px;
+            transition: color 0.3s ease;
+        }
+
+        .close-search-btn:hover {
+            color: #c4c6ca;
+        }
+
+        .search-results {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .search-result-item {
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid #3a3a5a;
+            max-height: 180px;
+            overflow: hidden;
+        }
+
+        .search-result-item:hover {
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateX(5px);
+            border-color: #667eea;
+        }
+
+        .search-result-image-container {
+            position: relative;
+            width: 100%;
+            height: 80px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: rgba(15, 15, 35, 0.5);
+        }
+
+        .search-result-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border: 1px solid #3a3a5a;
+        }
+
+        .image-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(26, 26, 46, 0.8);
+            color: #8a8a9a;
+            font-size: 12px;
+            gap: 4px;
+        }
+
+        .search-result-content {
+            flex: 1;
+        }
+
+        .search-result-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #ffffff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .search-result-desc {
+            font-size: 12px;
+            color: #c4c6ca;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 对话框样式 */
+        .dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            z-index: 2000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .dialog-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .dialog {
+            background: linear-gradient(135deg, #1e1e3f 0%, #2a2a4a 100%);
+            border-radius: 16px;
+            padding: 30px;
+            min-width: 400px;
+            max-width: 500px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            border: 1px solid #3a3a5a;
+            transform: scale(0.8) translateY(20px);
+            transition: all 0.3s ease;
+        }
+
+        .dialog-overlay.show .dialog {
+            transform: scale(1) translateY(0);
+        }
+
+        .dialog-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #ffffff;
+            text-align: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .dialog-content {
+            margin-bottom: 25px;
+        }
+
+        .dialog-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #3a3a5a;
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        .dialog-input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .dialog-input::placeholder {
+            color: #8a8a9a;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .dialog-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 80px;
+        }
+
+        .dialog-btn-cancel {
+            background: rgba(255, 255, 255, 0.1);
+            color: #c4c6ca;
+            border: 1px solid #3a3a5a;
+        }
+
+        .dialog-btn-cancel:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+        }
+
+        .dialog-btn-confirm {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .dialog-btn-confirm:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .dialog-btn-delete {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .dialog-btn-delete:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+        }
+
+        /* 加载动画 */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(58, 58, 90, 0.3);
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 三角形切换图标样式 */
+        .toggle-icon {
+            display: inline-block;
+            font-size: 10px; /* 缩小到50% */
+            color: #667eea;
+            transition: all 0.3s ease;
+            transform-origin: center;
+            text-shadow: 0 1px 3px rgba(102, 126, 234, 0.3);
+            margin-right: 6px;
+            width: 12px;
+            text-align: center;
+        }
+        
+        .toggle-icon:hover {
+            color: #764ba2;
+            transform: scale(1.2);
+            text-shadow: 0 2px 6px rgba(118, 75, 162, 0.5);
+        }
+        
+        .folder-item:hover .toggle-icon {
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(255, 255, 255, 0.3);
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 250px;
+            }
+            
+            .search-box {
+                width: 200px;
+            }
+            
+            .search-sidebar {
+            width: 100%;
+            right: -100%;
+        }
+    }
+    
+    /* 文件夹操作弹窗样式 */
+    .folder-action-popup {
+        position: fixed;
+        background: rgba(30, 30, 30, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 15px;
+        z-index: 1000;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        min-width: 200px;
+        display: none;
+    }
+    
+    .folder-action-popup h4 {
+        margin: 0 0 15px 0;
+        color: #ffffff;
+        font-size: 14px;
+        text-align: center;
+    }
+    
+    .folder-action-popup .action-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+    }
+    
+    .folder-action-popup .action-btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s ease;
+    }
+    
+    .folder-action-popup .rename-btn {
+        background: linear-gradient(135deg, #4CAF50, #45a049);
+        color: white;
+    }
+    
+    .folder-action-popup .delete-btn {
+        background: linear-gradient(135deg, #f44336, #d32f2f);
+        color: white;
+    }
+    
+    .folder-action-popup .cancel-btn {
+        background: linear-gradient(135deg, #6c757d, #5a6268);
+        color: white;
+    }
+    
+    .folder-action-popup .action-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+    
+    /* 模糊背景 */
+    .blur-background {
+        filter: blur(2px);
+        transition: filter 0.3s ease;
+    }
+    </style>
+</head>
+<body>
+    <!-- 抽屉切换按钮 -->
+    <button class="drawer-toggle sidebar-open" id="drawerToggle" onclick="toggleSidebar()">收起</button>
+    
+    <div class="search-overlay" id="searchOverlay"></div>
+    
+    <div class="container" id="mainContainer">
+        <!-- 左侧文件夹树 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">📁 文件管理</div>
+                <div class="sidebar-actions">
+                    <button class="add-folder-btn" onclick="showCreateFolderDialog()">+ 新建</button>
+                </div>
+            </div>
+            <div class="folder-tree" id="folderTree">
+                <!-- 文件夹树将通过JavaScript动态生成 -->
+            </div>
+        </div>
+
+        <!-- 主内容区域 -->
+        <div class="main-content">
+            <!-- 顶部搜索栏 -->
+            <div class="header">
+                <h2 style="color: #ffffff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);">InstaGo 智能图片管理</h2>
+                <div class="search-container">
+                    <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索图片内容..." 
+                           onfocus="focusSearch()" onblur="blurSearch()" onkeyup="handleSearch(event)">
+                </div>
+            </div>
+
+            <!-- 内容展示区域 -->
+            <div class="content-area" id="contentArea">
+                <div class="welcome-screen" id="welcomeScreen">
+                    <h1>🎨 欢迎使用 InstaGo</h1>
+                    <p>智能内容管理系统，让您的数据更有序、更智能</p>
+                    <p>👈 点击左侧文件夹开始浏览您的内容集合</p>
+                    <p>🔍 使用右上角搜索框快速找到您需要的内容</p>
+                    <p style="margin-top: 30px; font-size: 0.9em; opacity: 0.7;">✨ 现代化暗色主题 | 🚀 高性能向量搜索 | 📁 智能文件夹管理</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 搜索结果侧边栏 -->
+    <div class="search-sidebar" id="searchSidebar">
+        <div class="search-sidebar-header">
+            <div class="search-sidebar-title">🔍 搜索结果</div>
+            <button class="close-search-btn" onclick="closeSearchSidebar()">×</button>
+        </div>
+        <div class="search-results" id="searchResults">
+            <!-- 搜索结果将通过JavaScript动态生成 -->
+        </div>
+    </div>
+    
+    <!-- 重命名对话框 -->
+    <div class="dialog-overlay" id="renameDialog">
+        <div class="dialog">
+            <div class="dialog-title">✏️ 重命名文件夹</div>
+            <div class="dialog-content">
+                <input type="text" class="dialog-input" id="renameInput" placeholder="请输入新的文件夹名称">
+            </div>
+            <div class="dialog-buttons">
+                <button class="dialog-btn dialog-btn-cancel" onclick="hideRenameDialog()">取消</button>
+                <button class="dialog-btn dialog-btn-confirm" onclick="executeRename()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除确认对话框 -->
+    <div class="dialog-overlay" id="deleteDialog">
+        <div class="dialog">
+            <div class="dialog-title">🗑️ 删除文件夹</div>
+            <div class="dialog-content">
+                <p style="color: #c4c6ca; text-align: center; margin: 0;">确定要删除文件夹 "<span id="deleteTargetName"></span>" 吗？</p>
+                <p style="color: #ff6b6b; font-size: 12px; text-align: center; margin: 10px 0 0 0;">此操作不可撤销</p>
+            </div>
+            <div class="dialog-buttons">
+                <button class="dialog-btn dialog-btn-cancel" onclick="hideDeleteDialog()">取消</button>
+                <button class="dialog-btn dialog-btn-delete" onclick="executeDelete()">删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建文件夹对话框 -->
+    <div class="dialog-overlay" id="createFolderDialog">
+        <div class="dialog">
+            <div class="dialog-title">📁 新建文件夹</div>
+            <div class="dialog-content">
+                <input type="text" class="dialog-input" id="createFolderInput" placeholder="请输入文件夹名称">
+            </div>
+            <div class="dialog-buttons">
+                <button class="dialog-btn dialog-btn-cancel" onclick="hideCreateFolderDialog()">取消</button>
+                <button class="dialog-btn dialog-btn-confirm" onclick="executeCreateFolder()">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let currentFolder = null;
+        let currentFile = null;
+        let folders = [];
+        let files = [];
+        let searchTimeout = null;
+        let sidebarCollapsed = false;
+
+        // 初始化页面
+        document.addEventListener('DOMContentLoaded', function() {
+            loadFolders();
+        });
+
+        // 加载文件夹数据
+        async function loadFolders() {
+            try {
+                // 递归加载所有文件夹
+                folders = [{ id: 0, name: '根目录', upper: null }];
+                await loadFoldersRecursively(0);
+            } catch (error) {
+                console.error('加载文件夹失败:', error);
+                // 使用默认数据
+                folders = [{ id: 0, name: '根目录', upper: null }];
+            }
+            
+            renderFolderTree();
+        }
+        
+        // 递归加载文件夹
+        async function loadFoldersRecursively(parentId) {
+            try {
+                const response = await fetch(`/folder/${parentId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const subfolders = data.subfolders || [];
+                    
+                    // 添加子文件夹到全局folders数组
+                    for (const subfolder of subfolders) {
+                        folders.push({
+                            id: subfolder.id,
+                            name: subfolder.name,
+                            upper: subfolder.upper
+                        });
+                        
+                        // 递归加载子文件夹的子文件夹
+                        await loadFoldersRecursively(subfolder.id);
+                    }
+                }
+            } catch (error) {
+                console.error(`加载文件夹 ${parentId} 的子文件夹失败:`, error);
+            }
+        }
+
+        // buildFolderTree函数已被移除，现在使用loadFoldersRecursively直接构建文件夹数组
+
+        // 渲染文件夹树
+        async function renderFolderTree() {
+            const treeContainer = document.getElementById('folderTree');
+            treeContainer.innerHTML = '';
+            
+            // 存储展开状态
+            if (!window.expandedFolders) {
+                window.expandedFolders = new Set([0]); // 默认展开根目录
+            }
+            
+            // 防止无限递归的渲染函数
+            async function renderFolder(folderId, level = 0, visited = new Set()) {
+                // 防止循环引用
+                if (visited.has(folderId) || level > 10) {
+                    return;
+                }
+                visited.add(folderId);
+                
+                const folder = folders.find(f => f.id === folderId);
+                if (!folder) return;
+                
+                // 检查是否有子文件夹
+                const hasSubfolders = folders.some(f => f.upper === folderId && f.id !== folderId);
+                const isExpanded = window.expandedFolders.has(folderId);
+                
+                // 对于所有文件夹都显示展开折叠图标，即使暂时没有子文件夹
+                const showToggleIcon = true; // 始终显示切换图标
+                
+                const folderElement = document.createElement('div');
+                folderElement.className = 'folder-item';
+                folderElement.style.paddingLeft = (level * 20 + 16) + 'px';
+                
+                // 添加展开/折叠图标
+                const expandIcon = isExpanded ? '📂' : '📁'; // 所有文件夹都显示文件夹图标
+                const toggleIcon = `<span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span>`; // 所有文件夹都显示切换图标
+                
+                folderElement.innerHTML = `
+                    ${toggleIcon}
+                    <span class="folder-icon">${expandIcon}</span>
+                    <span class="folder-name">${folder.name}</span>
+                    ${folder.id !== 0 ? '<div class="folder-actions"><span class="action-icon rename-icon" title="重命名">✏️</span><span class="action-icon delete-icon" title="删除">🗑️</span></div>' : ''}
+                `;
+                
+                // 添加悬停事件显示操作图标
+                if (folder.id !== 0) {
+                    folderElement.addEventListener('mouseenter', () => {
+                        const actions = folderElement.querySelector('.folder-actions');
+                        if (actions) actions.style.opacity = '1';
+                    });
+                    
+                    folderElement.addEventListener('mouseleave', () => {
+                        const actions = folderElement.querySelector('.folder-actions');
+                        if (actions) actions.style.opacity = '0';
+                    });
+                    
+                    // 添加图标点击事件
+                    folderElement.addEventListener('click', (e) => {
+                        if (e.target.classList.contains('toggle-icon')) {
+                            e.stopPropagation();
+                            // 切换展开状态
+                            if (window.expandedFolders.has(folderId)) {
+                                window.expandedFolders.delete(folderId);
+                            } else {
+                                window.expandedFolders.add(folderId);
+                            }
+                            renderFolderTree(); // 重新渲染
+                        } else if (e.target.classList.contains('rename-icon')) {
+                            e.stopPropagation();
+                            showRenameDialog(folder.id);
+                        } else if (e.target.classList.contains('delete-icon')) {
+                            e.stopPropagation();
+                            showDeleteDialog(folder.id);
+                        } else {
+                            selectFolder(folder.id, e.target);
+                        }
+                    });
+                    
+                    // 添加双击事件来展开/折叠文件夹
+                    folderElement.addEventListener('dblclick', (e) => {
+                        if (!e.target.classList.contains('rename-icon') && !e.target.classList.contains('delete-icon')) {
+                            e.stopPropagation();
+                            // 切换展开状态
+                            if (window.expandedFolders.has(folderId)) {
+                                window.expandedFolders.delete(folderId);
+                            } else {
+                                window.expandedFolders.add(folderId);
+                            }
+                            renderFolderTree(); // 重新渲染
+                        }
+                    });
+                } else {
+                    folderElement.addEventListener('click', (e) => {
+                        if (e.target.classList.contains('toggle-icon')) {
+                            e.stopPropagation();
+                            // 切换展开状态
+                            if (window.expandedFolders.has(folderId)) {
+                                window.expandedFolders.delete(folderId);
+                            } else {
+                                window.expandedFolders.add(folderId);
+                            }
+                            renderFolderTree(); // 重新渲染
+                        } else {
+                            selectFolder(folder.id, e.target);
+                        }
+                    });
+                    
+                    // 添加双击事件来展开/折叠文件夹
+                    folderElement.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        // 切换展开状态
+                        if (window.expandedFolders.has(folderId)) {
+                            window.expandedFolders.delete(folderId);
+                        } else {
+                            window.expandedFolders.add(folderId);
+                        }
+                        renderFolderTree(); // 重新渲染
+                    });
+                }
+                
+                folderElement.dataset.folderId = folder.id;
+                treeContainer.appendChild(folderElement);
+                
+                // 只有在展开状态下才渲染子文件夹和文件
+                if (isExpanded) {
+                    // 先渲染子文件夹，再渲染文件，确保文件夹优先级高于文件
+                    const subFolders = folders.filter(f => f.upper === folderId && f.id !== folderId);
+                    for (const subFolder of subFolders) {
+                        await renderFolder(subFolder.id, level + 1, new Set(visited));
+                    }
+                    
+                    // 最后渲染文件，使其显示在子文件夹下方
+                    await loadFolderFiles(folderId, level + 1, treeContainer, folderElement);
+                }
+            }
+            
+            // 从根目录开始渲染
+            await renderFolder(0);
+        }
+
+        // 加载文件夹中的文件
+        async function loadFolderFiles(folderId, level, container, afterElement) {
+            try {
+                const response = await fetch(`/folder/${folderId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const files = data.objects || [];
+                    
+                    files.forEach(file => {
+                        const fileElement = document.createElement('div');
+                        fileElement.className = 'file-item';
+                        fileElement.style.paddingLeft = (level * 20 + 16) + 'px';
+                        fileElement.innerHTML = `📄 ${file.name || `文件${file.id}`}`;
+                        fileElement.onclick = (e) => selectFile(file, e.target);
+                        // 添加folder_id属性，标识文件所属的文件夹
+                        fileElement.dataset.folderId = folderId;
+                        fileElement.dataset.fileId = file.id;
+                        
+                        // 直接添加到容器末尾，因为此时子文件夹已经渲染完成
+                        container.appendChild(fileElement);
+                    });
+                }
+            } catch (error) {
+                console.error('加载文件失败:', error);
+            }
+        }
+
+        // 选择文件夹
+        function selectFolder(folderId, element) {
+            currentFolder = folderId;
+            currentFile = null; // 清除文件选中状态
+            
+            // 更新选中状态 - 清除所有选中状态
+            document.querySelectorAll('.folder-item, .file-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // 设置当前文件夹为选中状态
+            if (element) {
+                const folderItem = element.closest('.folder-item') || element;
+                folderItem.classList.add('active');
+            } else {
+                // 如果没有传递element，通过folderId查找对应的文件夹元素
+                const folderElements = document.querySelectorAll('.folder-item');
+                folderElements.forEach(folderEl => {
+                    if (folderEl.dataset.folderId == folderId) {
+                        folderEl.classList.add('active');
+                    }
+                });
+            }
+            
+            // 加载文件夹内容
+            loadFolderContent(folderId);
+        }
+
+        // 选择文件
+        function selectFile(file, element) {
+            console.log('selectFile called with:', file, element);
+            currentFile = file;
+            currentFolder = null; // 清除文件夹选中状态
+            
+            // 更新选中状态 - 清除所有选中状态
+            document.querySelectorAll('.folder-item, .file-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // 设置当前文件为选中状态
+            if (element) {
+                element.classList.add('active');
+                console.log('File element set as active');
+            }
+            
+            // 加载文件内容
+            console.log('About to call loadFileContent');
+            loadFileContent(file);
+        }
+
+        // 加载文件夹内容
+        async function loadFolderContent(folderId) {
+            const contentArea = document.getElementById('contentArea');
+            const welcomeScreen = document.getElementById('welcomeScreen');
+            
+            welcomeScreen.style.display = 'none';
+            
+            try {
+                // 这里应该调用后端API获取文件夹内容
+                const response = await fetch(`/folder/${folderId}`);
+                const data = await response.json();
+                
+                // 显示文件夹内容
+                contentArea.innerHTML = `
+                    <div class="markdown-content">
+                        <h1>📁 ${folders.find(f => f.id === folderId)?.name || '未知文件夹'}</h1>
+                        <p>文件夹包含 ${data.objects?.length || 0} 个文件</p>
+                        
+                        <div class="images-section">
+                            <h3 class="images-title">📸 文件夹中的图片</h3>
+                            <div class="images-grid" id="imagesGrid">
+                                <!-- 图片将通过JavaScript动态加载 -->
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // 加载图片
+                if (data.objects && data.objects.length > 0) {
+                    renderImages(data.objects);
+                }
+                
+            } catch (error) {
+                console.error('加载文件夹内容失败:', error);
+                contentArea.innerHTML = `
+                    <div class="markdown-content">
+                        <h1>📁 ${folders.find(f => f.id === folderId)?.name || '未知文件夹'}</h1>
+                        <p>暂无内容或加载失败</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 加载文件内容
+        function loadFileContent(file) {
+            console.log('loadFileContent called with file:', file);
+            const contentArea = document.getElementById('contentArea');
+            const welcomeScreen = document.getElementById('welcomeScreen');
+            
+            console.log('contentArea element:', contentArea);
+            console.log('welcomeScreen element:', welcomeScreen);
+            
+            if (welcomeScreen) {
+                welcomeScreen.style.display = 'none';
+                console.log('welcomeScreen hidden');
+            }
+            
+            // 显示文件信息和内容
+            const fileTitle = file.name || `文件 #${file.id}`;
+            
+            // 处理图片数据 - 添加data:image前缀如果缺失
+            function formatImageData(data) {
+                if (!data) return null;
+                // 如果已经是完整的data URL，直接返回
+                if (data.startsWith('data:')) {
+                    return data;
+                }
+                // 如果是base64数据，添加前缀
+                return `data:image/jpeg;base64,${data}`;
+            }
+            
+            // 构建图片显示部分
+            let imageHtml = '';
+            const formattedImageData = formatImageData(file.data);
+            if (formattedImageData) {
+                imageHtml = `
+                    <div style="text-align: center; margin: 20px 0;">
+                        <img src="${formattedImageData}" alt="${file.name || '图片'}" 
+                             style="max-width: 100%; max-height: 500px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);" 
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <div style="display: none; padding: 40px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; color: #6c757d;">
+                            <p>🖼️ 图片加载失败</p>
+                            <p>图片数据可能已损坏或格式不支持</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                imageHtml = `
+                    <div style="text-align: center; padding: 40px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; margin: 20px 0; color: #6c757d;">
+                        <p>📷 暂无图片数据</p>
+                        <p>该文件不包含图片内容</p>
+                    </div>
+                `;
+            }
+            
+            // 统一的Markdown渲染函数
+            function renderMarkdown(text) {
+                if (!text) return '暂无内容';
+                
+                // 处理Markdown语法
+                let formatted = text
+                    // 标题
+                    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+                    // 粗体
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    // 斜体
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    // 代码块
+                    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+                    // 行内代码
+                    .replace(/`([^`]+)`/g, '<code>$1</code>')
+                    // 链接
+                    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+                    // 换行处理
+                    .replace(/\n/g, '<br>')
+                    // 段落分隔
+                    .replace(/([.!?])([A-Z])/g, '$1<br><br>$2');
+                
+                return formatted;
+            }
+            
+            // 处理纯文本描述（保留换行但不解析Markdown）
+            function formatPlainDescription(description) {
+                if (!description) return '暂无描述';
+                
+                // 处理常见的Markdown格式问题
+                let formatted = description
+                    // 在标题前后添加换行
+                    .replace(/(^|\n)(#{1,6}\s)/g, '\n\n$2')
+                    // 在列表项前添加换行
+                    .replace(/(^|\n)([*+-]\s|\d+\.\s)/g, '\n$2')
+                    // 在代码块前后添加换行
+                    .replace(/(^|\n)(```)/g, '\n\n$2')
+                    // 在段落之间添加换行（两个连续的句号、感叹号或问号后）
+                    .replace(/([.!?])([A-Z])/g, '$1\n\n$2')
+                    // 清理多余的换行
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+                
+                return formatted;
+            }
+            
+            // 上方描述使用Markdown渲染（解析符号但无换行）
+            const renderedDescription = renderMarkdown(file.description || '暂无描述');
+            // 详细描述使用纯文本格式（保留换行但不解析符号）
+            const plainDescription = formatPlainDescription(file.description);
+            
+            const contentHtml = `
+                <h1>📄 ${fileTitle}</h1>
+                <p><strong>文件ID:</strong> ${file.id}</p>
+                <p><strong>文件名:</strong> ${file.name || '未命名'}</p>
+                <p><strong>描述:</strong> ${renderedDescription}</p>
+                <p><strong>所属文件夹:</strong> ${file.folder_id}</p>
+                
+                ${imageHtml}
+                
+                <div style="background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 8px; margin-top: 20px;">
+                    <h3>📝 详细描述</h3>
+                    <div style="background: rgba(255, 255, 255, 0.03); padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #e0e0e0;">
+                        ${plainDescription}
+                    </div>
+                </div>
+            `;
+            
+            if (contentArea) {
+                contentArea.innerHTML = `
+                    <div class="markdown-content">
+                        ${contentHtml}
+                        
+                        <div class="images-section">
+                            <h3 class="images-title">📸 相关图片</h3>
+                            <div class="images-grid" id="imagesGrid">
+                                <!-- 图片将通过JavaScript动态加载 -->
+                            </div>
+                        </div>
+                    </div>
+                `;
+                console.log('contentArea innerHTML set successfully');
+            } else {
+                console.error('contentArea element not found!');
+            }
+            
+            // 加载相关图片
+            loadRelatedImages(file.id);
+        }
+
+        // 获取Markdown内容（模拟数据）
+        function getMarkdownContent(fileName) {
+            const contents = {
+                '缺失的第一个正数.md': `# 缺失的第一个正数
+
+## 题目描述
+
+给你一个未排序的整数数组 nums，请你找出其中没有出现的最小的正整数。
+
+请你实现时间复杂度为 O(n) 并且只使用常数级别额外空间的解决方案。
+
+## 示例
+
+\`\`\`
+输入：nums = [1,2,0]
+输出：3
+\`\`\`
+
+\`\`\`
+输入：nums = [3,4,-1,1]
+输出：2
+\`\`\`
+
+## 解题思路
+
+1. 将数组中的每个正整数 x 放到位置 x-1 上
+2. 遍历数组，找到第一个不在正确位置的数
+3. 返回该位置+1
+
+## 代码实现
+
+\`\`\`python
+def firstMissingPositive(nums):
+    n = len(nums)
+    
+    # 将每个正整数放到正确位置
+    for i in range(n):
+        while 1 <= nums[i] <= n and nums[nums[i] - 1] != nums[i]:
+            nums[nums[i] - 1], nums[i] = nums[i], nums[nums[i] - 1]
+    
+    # 找到第一个不在正确位置的数
+    for i in range(n):
+        if nums[i] != i + 1:
+            return i + 1
+    
+    return n + 1
+\`\`\`
+
+## 复杂度分析
+
+- 时间复杂度：O(n)
+- 空间复杂度：O(1)`,
+                
+                '两数之和.md': `# 两数之和
+
+## 题目描述
+
+给定一个整数数组 nums 和一个整数目标值 target，请你在该数组中找出和为目标值 target 的那两个整数，并返回它们的数组下标。
+
+## 示例
+
+\`\`\`
+输入：nums = [2,7,11,15], target = 9
+输出：[0,1]
+解释：因为 nums[0] + nums[1] == 9 ，返回 [0, 1] 。
+\`\`\`
+
+## 解题思路
+
+使用哈希表存储已遍历的数字及其索引，对于每个数字，检查目标值减去当前数字的结果是否在哈希表中。
+
+## 代码实现
+
+\`\`\`python
+def twoSum(nums, target):
+    hashmap = {}
+    for i, num in enumerate(nums):
+        complement = target - num
+        if complement in hashmap:
+            return [hashmap[complement], i]
+        hashmap[num] = i
+    return []
+\`\`\``,
+                
+                '三数之和.md': `# 三数之和
+
+## 题目描述
+
+给你一个包含 n 个整数的数组 nums，判断 nums 中是否存在三个元素 a，b，c，使得 a + b + c = 0？请你找出所有和为 0 且不重复的三元组。
+
+## 解题思路
+
+1. 排序数组
+2. 固定第一个数，用双指针寻找另外两个数
+3. 跳过重复元素
+
+## 代码实现
+
+\`\`\`python
+def threeSum(nums):
+    nums.sort()
+    result = []
+    
+    for i in range(len(nums) - 2):
+        if i > 0 and nums[i] == nums[i-1]:
+            continue
+            
+        left, right = i + 1, len(nums) - 1
+        
+        while left < right:
+            total = nums[i] + nums[left] + nums[right]
+            
+            if total == 0:
+                result.append([nums[i], nums[left], nums[right]])
+                
+                while left < right and nums[left] == nums[left + 1]:
+                    left += 1
+                while left < right and nums[right] == nums[right - 1]:
+                    right -= 1
+                    
+                left += 1
+                right -= 1
+            elif total < 0:
+                left += 1
+            else:
+                right -= 1
+                
+    return result
+\`\`\``
+            };
+            
+            return contents[fileName] || `# ${fileName}\n\n暂无内容`;
+        }
+
+        // 加载相关图片
+        async function loadRelatedImages(fileId) {
+            const imagesGrid = document.getElementById('imagesGrid');
+            if (!imagesGrid) return;
+            
+            try {
+                // 调用API获取文件相关的图片
+                const response = await fetch(`/folder/${fileId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const images = data.objects || [];
+                    
+                    if (images.length > 0) {
+                        renderImages(images);
+                    } else {
+                        imagesGrid.innerHTML = `
+                            <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1 / -1;">
+                                <p>📷 暂无相关图片</p>
+                                <p>该文件没有关联的图片内容</p>
+                            </div>
+                        `;
+                    }
+                } else {
+                    imagesGrid.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1 / -1;">
+                            <p>📷 加载图片失败</p>
+                            <p>无法获取相关图片信息</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('加载相关图片失败:', error);
+                imagesGrid.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1 / -1;">
+                        <p>📷 加载图片失败</p>
+                        <p>网络连接错误，请稍后重试</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 渲染图片
+        function renderImages(images) {
+            const imagesGrid = document.getElementById('imagesGrid');
+            if (!imagesGrid) return;
+            
+            imagesGrid.innerHTML = '';
+            
+            images.forEach(image => {
+                const imageCard = document.createElement('div');
+                imageCard.className = 'image-card';
+                
+                // 截断描述文本，最多显示50个字符
+                const truncatedDesc = (image.description || image.name || '无描述').length > 50 
+                    ? (image.description || image.name || '无描述').substring(0, 50) + '...'
+                    : (image.description || image.name || '无描述');
+                
+                // 处理图片数据 - 添加data:image前缀如果缺失
+                function formatImageData(data) {
+                    if (!data) return null;
+                    // 如果已经是完整的data URL，直接返回
+                    if (data.startsWith('data:')) {
+                        return data;
+                    }
+                    // 如果是base64数据，添加前缀
+                    return `data:image/jpeg;base64,${data}`;
+                }
+                
+                // 使用格式化后的图片数据
+                const formattedImageData = formatImageData(image.data);
+                const imageUrl = formattedImageData || image.url || `/image/${image.id}` || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjhmOWZhIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzZjNzU3ZCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuaXoOazleWKoOi9vTwvdGV4dD48L3N2Zz4=';
+                
+                imageCard.innerHTML = `
+                    <img src="${imageUrl}" alt="${truncatedDesc}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjhmOWZhIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzZjNzU3ZCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuaXoOazleWKoOi9vTwvdGV4dD48L3N2Zz4='">
+                    <div class="image-card-content">
+                        <div class="image-card-title">${image.name || `图片 #${image.id}`}</div>
+                        <div class="image-card-desc" title="${image.description || image.name || '无描述'}">${truncatedDesc}</div>
+                    </div>
+                `;
+                
+                // 添加点击事件处理
+                imageCard.onclick = () => {
+                    // 跳转到对应的图片内容
+                    jumpToImageContent(image);
+                };
+                imagesGrid.appendChild(imageCard);
+            });
+        }
+
+        // 搜索功能
+        function focusSearch() {
+            const overlay = document.getElementById('searchOverlay');
+            const searchBox = document.getElementById('searchBox');
+            
+            // 创建放大的搜索框
+            const enlargedSearchBox = document.createElement('input');
+            enlargedSearchBox.type = 'text';
+            enlargedSearchBox.className = 'search-box';
+            enlargedSearchBox.id = 'enlargedSearchBox';
+            enlargedSearchBox.placeholder = '🔍 搜索内容...';
+            enlargedSearchBox.value = searchBox.value;
+            
+            // 添加事件监听器
+            enlargedSearchBox.addEventListener('keydown', (event) => {
+                event.stopPropagation();
+                if (event.key === 'Enter') {
+                    const query = enlargedSearchBox.value.trim();
+                    if (query) {
+                        performSearch(query);
+                        closeSearchOverlay();
+                    }
+                } else if (event.key === 'Escape') {
+                    closeSearchOverlay();
+                }
+            });
+            
+            enlargedSearchBox.addEventListener('input', (event) => {
+                event.stopPropagation();
+                // 同步到原搜索框
+                searchBox.value = enlargedSearchBox.value;
+            });
+            
+            overlay.innerHTML = '';
+            overlay.appendChild(enlargedSearchBox);
+            overlay.classList.add('active');
+            
+            // 聚焦到放大的搜索框
+            setTimeout(() => {
+                enlargedSearchBox.focus();
+                enlargedSearchBox.select();
+            }, 100);
+        }
+
+        function closeSearchOverlay() {
+            const overlay = document.getElementById('searchOverlay');
+            overlay.classList.remove('active');
+            
+            // 清空覆盖层内容
+            setTimeout(() => {
+                if (!overlay.classList.contains('active')) {
+                    overlay.innerHTML = '';
+                }
+            }, 300);
+        }
+
+        function blurSearch() {
+            // 检查是否有放大的搜索框处于活动状态
+            const overlay = document.getElementById('searchOverlay');
+            if (overlay.classList.contains('active')) {
+                return; // 如果覆盖层激活，不执行blur逻辑
+            }
+            
+            // 延迟关闭，避免点击搜索框时立即关闭
+            setTimeout(() => {
+                if (!document.getElementById('searchBox').matches(':focus')) {
+                    closeSearchOverlay();
+                }
+            }, 200);
+        }
+
+        function handleSearch(event) {
+            const query = event.target.value.trim();
+            
+            if (event.key === 'Enter' && query) {
+                performSearch(query);
+            } else if (query.length > 2) {
+                // 防抖搜索
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    performSearch(query);
+                }, 500);
+            }
+        }
+
+        // 执行搜索
+        async function performSearch(query) {
+            const searchSidebar = document.getElementById('searchSidebar');
+            const searchResults = document.getElementById('searchResults');
+            
+            // 显示侧边栏
+            searchSidebar.classList.add('open');
+            
+            // 显示加载状态
+            searchResults.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            
+            try {
+                // 调用搜索API
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        limit: 10
+                    })
+                });
+                
+                const data = await response.json();
+                
+                // 渲染搜索结果
+                renderSearchResults(data.results || []);
+                
+            } catch (error) {
+                console.error('搜索失败:', error);
+                searchResults.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d;">
+                        <p>🔍 搜索失败</p>
+                        <p>请检查网络连接或稍后重试</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // 新的对话框函数
+        let currentDialogFolderId = null;
+        
+        function showRenameDialog(folderId) {
+            currentDialogFolderId = folderId;
+            const folder = folders.find(f => f.id === folderId);
+            const dialog = document.getElementById('renameDialog');
+            const input = document.getElementById('renameInput');
+            
+            // 设置当前文件夹名称
+            input.value = folder ? folder.name : '';
+            
+            // 显示对话框
+            dialog.classList.add('show');
+            
+            // 聚焦输入框
+            setTimeout(() => {
+                input.focus();
+                input.select();
+            }, 100);
+        }
+        
+        function hideRenameDialog() {
+            const dialog = document.getElementById('renameDialog');
+            dialog.classList.remove('show');
+            currentDialogFolderId = null;
+        }
+        
+        function showDeleteDialog(folderId) {
+            currentDialogFolderId = folderId;
+            const folder = folders.find(f => f.id === folderId);
+            const dialog = document.getElementById('deleteDialog');
+            const nameSpan = document.getElementById('deleteTargetName');
+            
+            // 设置要删除的文件夹名称
+            nameSpan.textContent = folder ? folder.name : '未知文件夹';
+            
+            // 显示对话框
+            dialog.classList.add('show');
+        }
+        
+        function hideDeleteDialog() {
+            const dialog = document.getElementById('deleteDialog');
+            dialog.classList.remove('show');
+            currentDialogFolderId = null;
+        }
+        
+        function executeRename() {
+            const input = document.getElementById('renameInput');
+            const newName = input.value.trim();
+            
+            if (newName && currentDialogFolderId !== null) {
+                renameFolder(currentDialogFolderId, newName);
+            }
+            
+            hideRenameDialog();
+        }
+        
+        async function executeDelete() {
+            if (currentDialogFolderId === null) {
+                hideDeleteDialog();
+                return;
+            }
+            
+            const folderId = currentDialogFolderId;
+            hideDeleteDialog();
+            
+            try {
+                const response = await fetch(`/folder/${folderId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    // 重新加载文件夹数据
+                    await loadFolders();
+                    
+                    // 如果删除的是当前选中的文件夹，清除选中状态
+                    if (currentFolder === folderId) {
+                        currentFolder = null;
+                        document.getElementById('contentArea').innerHTML = `
+                            <div class="welcome-screen">
+                                <h1>🎨 欢迎使用 InstaGo</h1>
+                                <p>智能内容管理系统，让您的数据更有序、更智能</p>
+                                <p>👈 点击左侧文件夹开始浏览您的内容集合</p>
+                                <p>🔍 使用右上角搜索框快速找到您需要的内容</p>
+                                <p style="margin-top: 30px; font-size: 0.9em; opacity: 0.7;">✨ 现代化暗色主题 | 🚀 高性能向量搜索 | 📁 智能文件夹管理</p>
+                            </div>
+                        `;
+                    }
+                    
+                    alert('文件夹删除成功！');
+                } else {
+                    alert('删除文件夹失败，请重试。');
+                }
+            } catch (error) {
+                console.error('删除文件夹失败:', error);
+                alert('删除文件夹失败，请检查网络连接。');
+            }
+        }
+        
+        // 点击对话框外部关闭对话框
+        document.addEventListener('click', (e) => {
+            const renameDialog = document.getElementById('renameDialog');
+            const deleteDialog = document.getElementById('deleteDialog');
+            
+            // 检查是否点击在对话框外部
+            if (renameDialog.classList.contains('show') && e.target === renameDialog) {
+                hideRenameDialog();
+            }
+            
+            if (deleteDialog.classList.contains('show') && e.target === deleteDialog) {
+                hideDeleteDialog();
+            }
+        });
+        
+        // 按ESC键关闭对话框
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const renameDialog = document.getElementById('renameDialog');
+                const deleteDialog = document.getElementById('deleteDialog');
+                
+                if (renameDialog.classList.contains('show')) {
+                    hideRenameDialog();
+                }
+                
+                if (deleteDialog.classList.contains('show')) {
+                    hideDeleteDialog();
+                }
+            }
+        });
+        
+        // 在重命名输入框中按Enter键确认
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const renameDialog = document.getElementById('renameDialog');
+                if (renameDialog.classList.contains('show') && e.target.id === 'renameInput') {
+                    executeRename();
+                }
+            }
+        });
+        
+        // 旧的弹窗代码已移除
+        
+        // 修改重命名函数，接受新名称参数
+        async function renameFolder(folderId, newName) {
+            if (!newName) {
+                const folder = folders.find(f => f.id === folderId);
+                newName = prompt('请输入新的文件夹名称:', folder ? folder.name : '');
+            }
+            
+            if (!newName || !newName.trim()) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/folder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        id: folderId,
+                        name: newName.trim()
+                    })
+                });
+                
+                if (response.ok) {
+                    // 重新加载文件夹列表
+                    await loadFolders();
+                    alert('文件夹重命名成功！');
+                } else {
+                    alert('重命名失败，请稍后重试');
+                }
+            } catch (error) {
+                console.error('重命名文件夹失败:', error);
+                alert('重命名失败，请检查网络连接');
+            }
+        }
+
+        // 渲染搜索结果
+        function renderSearchResults(results) {
+            const searchResults = document.getElementById('searchResults');
+            
+            if (results.length === 0) {
+                searchResults.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d;">
+                        <p>🔍 未找到相关结果</p>
+                        <p>尝试使用其他关键词搜索</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            searchResults.innerHTML = '';
+            
+            results.forEach(result => {
+                const resultItem = document.createElement('div');
+                resultItem.className = 'search-result-item';
+                
+                // 截断描述文本
+                const maxDescLength = 100;
+                const truncatedDesc = result.description && result.description.length > maxDescLength 
+                    ? result.description.substring(0, maxDescLength) + '...' 
+                    : result.description || '暂无描述';
+                
+                // 处理图片数据 - 添加data:image前缀如果缺失
+                function formatImageData(data) {
+                    if (!data) return '';
+                    // 如果已经是完整的data URL，直接返回
+                    if (data.startsWith('data:')) {
+                        return data;
+                    }
+                    // 如果是base64数据，添加前缀
+                    return `data:image/jpeg;base64,${data}`;
+                }
+                
+                const formattedImageData = formatImageData(result.data);
+                
+                resultItem.innerHTML = `
+                    <div class="search-result-image-container">
+                        <img src="${formattedImageData}" alt="${result.description || ''}" class="search-result-image" 
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                        <div class="image-placeholder" style="display: none;">
+                            <span>🖼️</span>
+                            <span>图片加载失败</span>
+                        </div>
+                    </div>
+                    <div class="search-result-content">
+                        <div class="search-result-title">图片 #${result.id}</div>
+                        <div class="search-result-desc" title="${result.description || ''}">${truncatedDesc}</div>
+                    </div>
+                `;
+                
+                resultItem.onclick = () => {
+                    // 点击搜索结果，跳转到对应内容
+                    jumpToContent(result);
+                };
+                
+                searchResults.appendChild(resultItem);
+            });
+        }
+
+        // 跳转到内容
+        function jumpToContent(result) {
+            // 关闭搜索侧边栏
+            closeSearchSidebar();
+            
+            // 根据结果跳转到对应的文件夹或文件
+            if (result.folder_id) {
+                selectFolder(result.folder_id);
+            }
+            
+            // 可以添加更多跳转逻辑
+            console.log('跳转到内容:', result);
+        }
+        
+        // 跳转到图片内容
+        function jumpToImageContent(image) {
+            // 如果图片有所属文件夹，先选择该文件夹
+            if (image.folder_id) {
+                selectFolder(image.folder_id);
+            }
+            
+            // 显示图片的详细信息
+            loadFileContent(image);
+            
+            console.log('跳转到图片内容:', image);
+        }
+
+        // 关闭搜索侧边栏
+        function closeSearchSidebar() {
+            const searchSidebar = document.getElementById('searchSidebar');
+            searchSidebar.classList.remove('open');
+            
+            // 清空搜索框
+            document.getElementById('searchBox').value = '';
+            blurSearch();
+        }
+
+        // 显示新建文件夹对话框
+        function showCreateFolderDialog() {
+            const dialog = document.getElementById('createFolderDialog');
+            const input = document.getElementById('createFolderInput');
+            
+            dialog.classList.add('show');
+            setTimeout(() => {
+                input.focus();
+                input.select();
+            }, 100);
+        }
+
+        // 隐藏新建文件夹对话框
+        function hideCreateFolderDialog() {
+            const dialog = document.getElementById('createFolderDialog');
+            dialog.classList.remove('show');
+            document.getElementById('createFolderInput').value = '';
+        }
+
+        // 执行创建文件夹
+        async function executeCreateFolder() {
+            const input = document.getElementById('createFolderInput');
+            const name = input.value.trim();
+            
+            if (!name) {
+                alert('请输入文件夹名称');
+                input.focus();
+                return;
+            }
+            
+            const upper = currentFolder || 0;
+            console.log('创建文件夹请求:', { name, upper, currentFolder });
+            
+            try {
+                const response = await fetch('/folder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        upper: upper
+                    })
+                });
+                
+                console.log('响应状态:', response.status, response.statusText);
+                
+                if (response.ok) {
+                    const responseText = await response.text();
+                    console.log('响应内容:', responseText);
+                    
+                    let newFolder;
+                    try {
+                        newFolder = JSON.parse(responseText);
+                    } catch (parseError) {
+                        console.error('JSON解析失败:', parseError, '原始响应:', responseText);
+                        alert('服务器响应格式错误');
+                        return;
+                    }
+                    
+                    hideCreateFolderDialog();
+                    
+                    // 重新加载文件夹数据
+                    await loadFolders();
+                    
+                    // 自动选中新创建的文件夹
+                    if (newFolder && newFolder.id) {
+                        setTimeout(() => {
+                            selectFolder(newFolder.id);
+                        }, 100);
+                    }
+                } else {
+                    const errorText = await response.text();
+                    console.error('请求失败:', response.status, errorText);
+                    
+                    let errorData;
+                    try {
+                        errorData = JSON.parse(errorText);
+                    } catch {
+                        errorData = { error: errorText || '未知错误' };
+                    }
+                    
+                    alert(`创建文件夹失败：${errorData.error || errorData.message || '请重试'}`);
+                }
+            } catch (error) {
+                console.error('创建文件夹网络错误:', error);
+                alert(`创建文件夹失败：${error.message}`);
+            }
+        }
+
+        // 重命名文件夹函数已在上面定义，这里移除重复定义
+
+        // 删除文件夹
+        async function deleteFolder(folderId) {
+            const folder = folders.find(f => f.id === folderId);
+            if (!folder) return;
+            
+            // 使用页面弹窗而不是浏览器confirm
+            showDeleteDialog(folderId, folder.name);
+            
+        }
+
+        // 删除选中的文件夹
+        function deleteSelectedFolder() {
+            if (!currentFolder || currentFolder === 0) {
+                alert('请先选择要删除的文件夹。\n注意：根目录不能删除。');
+                return;
+            }
+            
+            const folder = folders.find(f => f.id === currentFolder);
+            if (!folder) {
+                alert('未找到选中的文件夹。');
+                return;
+            }
+            
+            deleteFolder(currentFolder);
+        }
+
+        // 点击遮罩层关闭搜索
+        document.getElementById('searchOverlay').addEventListener('click', function(event) {
+            // 只有点击遮罩层本身时才关闭，点击搜索框不关闭
+            if (event.target === this) {
+                closeSearchOverlay();
+            }
+        });
+        
+        // 阻止搜索框的默认blur行为在覆盖层激活时触发
+        document.getElementById('searchBox').addEventListener('blur', function(event) {
+            const overlay = document.getElementById('searchOverlay');
+            if (overlay.classList.contains('active')) {
+                event.preventDefault();
+                return false;
+            }
+        });
+
+        // 切换侧边栏显示/隐藏
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const mainContent = document.querySelector('.main-content');
+            const toggleBtn = document.getElementById('drawerToggle');
+            
+            sidebarCollapsed = !sidebarCollapsed;
+            
+            if (sidebarCollapsed) {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('sidebar-collapsed');
+                toggleBtn.classList.remove('sidebar-open');
+                toggleBtn.classList.add('sidebar-collapsed');
+                toggleBtn.innerHTML = '展开';
+            } else {
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('sidebar-collapsed');
+                toggleBtn.classList.add('sidebar-open');
+                toggleBtn.classList.remove('sidebar-collapsed');
+                toggleBtn.innerHTML = '收起';
+            }
+        }
+
+        // 新建文件夹对话框事件处理
+        document.addEventListener('click', function(event) {
+            const createDialog = document.getElementById('createFolderDialog');
+            if (event.target === createDialog) {
+                hideCreateFolderDialog();
+            }
+        });
+
+        document.addEventListener('keydown', function(event) {
+            const createDialog = document.getElementById('createFolderDialog');
+            if (createDialog.classList.contains('show')) {
+                if (event.key === 'Escape') {
+                    hideCreateFolderDialog();
+                } else if (event.key === 'Enter') {
+                    executeCreateFolder();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

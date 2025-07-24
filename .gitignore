@@ -1,0 +1,7 @@
+.idea
+.vscode
+.env
+.promptx
+*.db
+chromem-go
+.vercel
