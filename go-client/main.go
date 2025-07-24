@@ -458,11 +458,29 @@ func setupRoutes() {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}))
+	
+	// 健康检查端点
+	http.HandleFunc("/health", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]interface{}{
+			"status": "ok",
+			"service": "InstaGo",
+			"version": "1.0.0",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}))
 
-	// 静态文件服务
+	// 根路径处理器
 	http.HandleFunc("/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			http.ServeFile(w, r, "frontend.html")
+		if r.URL.Path == "/" {
+			// 简单的健康检查响应
+			response := map[string]interface{}{
+				"service": "InstaGo",
+				"status": "running",
+				"endpoints": []string{"/upload", "/search", "/folders", "/health"},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
 		} else if r.URL.Path == "/test.html" {
 			http.ServeFile(w, r, "test.html")
 		} else {

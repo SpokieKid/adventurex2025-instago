@@ -11,11 +11,13 @@ import SwiftUI
 struct InstaGoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
+    @StateObject private var serverManager = ServerManager.shared
     
     var body: some Scene {
         MenuBarExtra("InstaGo", systemImage: "photo.circle") {
             MenuBarContent()
                 .environmentObject(appState)
+                .environmentObject(serverManager)
         }
         .menuBarExtraStyle(.window)
     }
@@ -24,7 +26,7 @@ struct InstaGoApp: App {
 // 应用状态管理
 class AppState: ObservableObject {
     @Published var isFloatingWindowVisible = true
-    @Published var serverURL = "http://localhost:3000/upload" // 默认服务端地址
+    @Published var serverURL = "http://localhost:8080/upload" // 默认服务端地址
     @Published var imageLabel = "" // 图片标签文字
     @Published var isFloatingWindowExpanded = false // 悬浮窗是否展开
     
@@ -64,6 +66,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // 设置应用不在Dock中显示
         NSApp.setActivationPolicy(.accessory)
+        
+        // 启动服务器
+        ServerManager.shared.applicationDidFinishLaunching()
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        print("👋 应用即将退出")
+        
+        // 停止服务器
+        ServerManager.shared.applicationWillTerminate()
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

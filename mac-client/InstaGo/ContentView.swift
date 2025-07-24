@@ -16,6 +16,7 @@ import AppKit
 // 菜单栏内容
 struct MenuBarContent: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var serverManager: ServerManager
     @State private var tempLabel = ""
     @State private var hasInitialized = false
     
@@ -45,6 +46,18 @@ struct MenuBarContent: View {
                     .foregroundColor(.secondary)
             }
             .padding(.bottom, 4)
+            
+            Divider()
+            
+            // 服务器状态显示
+            HStack {
+                Image(systemName: serverManager.isServerRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(serverManager.isServerRunning ? .green : .red)
+                Text("服务器: \(serverManager.statusDescription)")
+                    .font(.caption)
+                Spacer()
+            }
+            .padding(.vertical, 2)
             
             Divider()
             
@@ -807,57 +820,95 @@ struct FloatingButtonView: View {
         guard let imageData = NSImage(contentsOf: imageURL)?.tiffRepresentation,
               let bitmapImageRep = NSBitmapImageRep(data: imageData),
               let jpegData = bitmapImageRep.representation(using: .jpeg, properties: [:]) else {
+            print("❌ 图片处理失败")
             showUploadResult("处理失败")
             return
         }
         
+        // 转换为base64编码
+        let base64Image = jpegData.base64EncodedString()
+        print("📸 图片已转换为base64，大小: \(base64Image.count) 字符")
+        
         isUploading = true
         showUploadIndicator = false
         
-        let serverURL = "http://localhost:3000/upload"
+        let serverURL = "http://localhost:8080/upload"
         guard let url = URL(string: serverURL) else {
+            print("❌ 服务器地址无效: \(serverURL)")
             showUploadResult("服务器地址无效")
             return
         }
         
+        print("🚀 开始上传图片到: \(serverURL)")
+        print("🏷️ 图片标签: \"\(appState.imageLabel)\"")
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let boundary = UUID().uuidString
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        // 创建JSON请求体，匹配Go服务器期望的格式
+        let requestBody: [String: Any] = [
+            "image": base64Image,
+            "folder_id": 0  // 默认使用根文件夹
+        ]
         
-        var body = Data()
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            request.httpBody = jsonData
+            print("📦 请求体已创建，大小: \(jsonData.count) 字节")
+        } catch {
+            print("❌ JSON序列化失败: \(error.localizedDescription)")
+            showUploadResult("数据格式错误")
+            return
+        }
         
-        // 添加图片数据
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"image.jpg\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-        body.append(jpegData)
-        body.append("\r\n".data(using: .utf8)!)
-        
-        // 添加文字标签
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"label\"\r\n\r\n".data(using: .utf8)!)
-        body.append(appState.imageLabel.data(using: .utf8) ?? Data())
-        body.append("\r\n".data(using: .utf8)!)
-        
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        
-        request.httpBody = body
-        
-        URLSession.shared.dataTask(with: request) { data, response, _ in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             DispatchQueue.main.async {
                 isUploading = false
                 
+                // 详细的响应日志
+                print("📡 收到服务器响应")
+                
+                if let error = error {
+                    print("❌ 网络错误: \(error.localizedDescription)")
+                    showUploadResult("网络错误")
+                    return
+                }
+                
                 if let httpResponse = response as? HTTPURLResponse {
+                    print("🌐 HTTP状态码: \(httpResponse.statusCode)")
+                    print("📋 响应头: \(httpResponse.allHeaderFields)")
+                    
+                    if let data = data {
+                        print("📄 响应数据大小: \(data.count) 字节")
+                        
+                        // 尝试解析并输出响应内容
+                        if let responseString = String(data: data, encoding: .utf8) {
+                            print("📝 服务器响应内容:")
+                            print(responseString)
+                        }
+                        
+                        // 尝试解析JSON响应
+                        if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            print("📊 解析后的JSON响应:")
+                            for (key, value) in jsonResponse {
+                                print("   \(key): \(value)")
+                            }
+                        }
+                    } else {
+                        print("⚠️ 响应数据为空")
+                    }
+                    
                     if httpResponse.statusCode == 200 {
                         showUploadResult("上传成功")
-                        print("📤 图片上传成功，标签: \"\(appState.imageLabel)\"")
+                        print("✅ 图片上传成功，标签: \"\(appState.imageLabel)\"")
                     } else {
-                        showUploadResult("服务器错误")
+                        showUploadResult("服务器错误(\(httpResponse.statusCode))")
+                        print("❌ 服务器返回错误状态码: \(httpResponse.statusCode)")
                     }
                 } else {
-                    showUploadResult("上传失败")
+                    print("❌ 无效的HTTP响应")
+                    showUploadResult("响应错误")
                 }
             }
         }.resume()
