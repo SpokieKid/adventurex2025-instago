@@ -1,18 +1,17 @@
 package main
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"strconv"
 
-	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
-	_ "github.com/mattn/go-sqlite3"
-	chromem "github.com/philippgille/chromem-go"
+	"github.com/adventurex2025-instago/go-client/database"
+	"github.com/adventurex2025-instago/go-client/handlers"
+	"github.com/adventurex2025-instago/go-client/models"
+	"github.com/adventurex2025-instago/go-client/services"
 )
+
 
 // 数据模型
 type Folder struct {
@@ -314,114 +313,110 @@ func createOrUpdateFolderHandler(c *gin.Context) {
 	}
 }
 
-// 获取文件夹内容处理器
-func getFolderContentsHandler(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid folder ID"})
-		return
-	}
-
-	// 获取子文件夹
-	subFolders, err := getSubFolders(id)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get subfolders: %v", err)})
-		return
-	}
-
-	// 获取文件夹中的对象
-	objects, err := getObjectsInFolder(id)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get objects: %v", err)})
-		return
-	}
-
-	c.JSON(200, gin.H{
-		"subfolders": subFolders,
-		"objects":    objects,
-	})
-}
-
-// 删除文件夹处理器
-func deleteFolderHandler(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid folder ID"})
-		return
-	}
-
-	err = deleteFolder(id)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to delete folder: %v", err)})
-		return
-	}
-
-	c.JSON(200, gin.H{"message": "Folder deleted successfully"})
-}
-
 func main() {
-	// 加载环境变量
-	if err := godotenv.Load(".env"); err != nil {
-		log.Printf("Warning: .env file not found: %v", err)
+	// 加载配置
+	config := loadConfig()
+
+
+	// 初始化数据库
+	db, err := database.NewDatabase(config.DBPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
+	// 初始化AI服务
+	aiService, err := services.NewAIService(config)
+	if err != nil {
+		log.Fatalf("Failed to initialize AI service: %v", err)
 	}
 
-	// 初始化配置
-	config = Config{
+	// 初始化处理器
+	handler := handlers.NewHandler(db, aiService)
+
+	// 设置路由
+	setupRoutes(handler)
+
+	// 启动服务器
+	port := config.Port
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("Server starting on port %s...\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// 加载配置
+func loadConfig() *models.Config {
+	return &models.Config{
 		QwenVLAPIKey:   getEnv("QWEN_VL_API_KEY", ""),
 		QwenTextAPIKey: getEnv("QWEN_TEXT_API_KEY", ""),
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
 		DBPath:         getEnv("DB_PATH", "./instago.db"),
 		Port:           getEnv("PORT", "8080"),
 	}
+}
 
-	// 初始化数据库
-	if err := initDB(); err != nil {
-		log.Fatal("Failed to initialize database:", err)
+// 获取环境变量
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
-	defer db.Close()
+	return defaultValue
+}
 
-	// 初始化向量数据库
-	if err := initVectorDB(); err != nil {
-		log.Fatal("Failed to initialize vector database:", err)
-	}
+// 设置路由
+func setupRoutes(handler *handlers.Handler) {
+	// 设置CORS
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// 设置CORS头
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	// 设置路由
-	router := gin.Default()
-
-	// 添加CORS中间件
-	router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+		// 处理预检请求
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
 			return
 		}
-		c.Next()
+
+		// 根据路径分发请求
+		switch {
+		case r.URL.Path == "/upload":
+			handler.UploadHandler(w, r)
+		case r.URL.Path == "/search":
+			handler.SearchHandler(w, r)
+		case r.URL.Path == "/folders":
+			handler.CreateOrUpdateFolderHandler(w, r)
+		case r.URL.Path == "/folders/" || (len(r.URL.Path) > 9 && r.URL.Path[:9] == "/folders/"):
+			if r.Method == "GET" {
+				handler.GetFolderContentsHandler(w, r)
+			} else if r.Method == "DELETE" {
+				handler.DeleteFolderHandler(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		case r.URL.Path == "/" || r.URL.Path == "/index.html":
+			serveStaticFile(w, r, "frontend.html")
+		case r.URL.Path == "/test.html":
+			serveStaticFile(w, r, "test.html")
+		default:
+			http.NotFound(w, r)
+		}
 	})
+}
 
-	// 静态文件服务
-	router.Static("/static", "./")
-	router.StaticFile("/", "./frontend.html")
-	router.StaticFile("/frontend.html", "./frontend.html")
-	router.StaticFile("/test.html", "./test.html")
+// 服务静态文件
+func serveStaticFile(w http.ResponseWriter, r *http.Request, filename string) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	// 健康检查
-	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
-	})
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
-	// 主要接口
-	router.POST("/upload", uploadHandler)
-	router.POST("/search", searchHandler)
-
-	// 文件夹管理接口
-	router.POST("/folder", createOrUpdateFolderHandler)
-	router.GET("/folder/:id", getFolderContentsHandler)
-	router.DELETE("/folder/:id", deleteFolderHandler)
-
-	log.Printf("Server starting on port %s", config.Port)
-	router.Run(":" + config.Port)
+	http.ServeFile(w, r, filename)
 }
