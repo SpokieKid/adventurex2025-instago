@@ -1,17 +1,20 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
-	"github.com/adventurex2025-instago/go-client/database"
-	"github.com/adventurex2025-instago/go-client/handlers"
-	"github.com/adventurex2025-instago/go-client/models"
-	"github.com/adventurex2025-instago/go-client/services"
+	_ "github.com/mattn/go-sqlite3"
+	chromem "github.com/philippgille/chromem-go"
+	"github.com/joho/godotenv"
 )
-
 
 // 数据模型
 type Folder struct {
@@ -139,86 +142,93 @@ func initVectorDB() error {
 	var err error
 	var embeddingFunc chromem.EmbeddingFunc
 
-	// // 使用默认嵌入函数（本地计算，无需外部服务）
-	// embeddingFunc = chromem.NewEmbeddingFuncDefault()
-
 	// 优先尝试使用Ollama嵌入函数（如果Ollama服务可用）
 	embeddingFunc = chromem.NewEmbeddingFuncOllama("nomic-embed-text", "http://localhost:11434/api")
-
-	// 如果有OpenAI API密钥且需要使用，可以取消注释以下代码
-	// if config.OpenAIAPIKey != "" {
-	//		embeddingFunc = chromem.NewEmbeddingFuncOpenAI(config.OpenAIAPIKey, chromem.EmbeddingModelOpenAI3Small)
-	// }
 
 	collection, err = vecDB.GetOrCreateCollection("instago", nil, embeddingFunc)
 	return err
 }
 
+// HTTP处理器
+
 // 上传图片处理器
-func uploadHandler(c *gin.Context) {
+func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req UploadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request format"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
 		return
 	}
 
 	if req.Image == "" {
-		c.JSON(400, gin.H{"error": "Image data is required"})
+		http.Error(w, "Image data is required", http.StatusBadRequest)
 		return
 	}
 
 	// 调用千问视觉模型分析图片
 	description, err := analyzeImageWithQwenVL(req.Image)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to analyze image: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to analyze image: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// 获取文件夹树信息
 	folderTree, err := getFolderTree()
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get folder tree: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to get folder tree: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// 调用千问文本模型获取摘要和推荐文件夹
 	digest, recommendedFolderID, err := processWithQwenText(description, folderTree, req.FolderID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to process with text model: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to process with text model: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// 创建Object并存储到数据库
 	objectID, err := createObject(req.Image, description, recommendedFolderID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create object: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to create object: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// 将摘要向量化并存储到向量数据库
 	if err := storeInVectorDB(objectID, digest); err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to store in vector database: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to store in vector database: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	c.JSON(200, gin.H{
+	response := map[string]interface{}{
 		"object_id":   objectID,
 		"description": description,
 		"digest":      digest,
 		"folder_id":   recommendedFolderID,
-	})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // 语义搜索处理器
-func searchHandler(c *gin.Context) {
+func searchHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req SearchRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request format"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
 		return
 	}
 
 	if req.Query == "" {
-		c.JSON(400, gin.H{"error": "Query is required"})
+		http.Error(w, "Query is required", http.StatusBadRequest)
 		return
 	}
 
@@ -227,7 +237,6 @@ func searchHandler(c *gin.Context) {
 	}
 
 	// 检查集合中的文档数量，避免请求数量超过实际文档数量
-	ctx := context.Background()
 	docCount := collection.Count()
 	if req.Limit > docCount {
 		req.Limit = docCount
@@ -235,17 +244,19 @@ func searchHandler(c *gin.Context) {
 
 	// 如果集合为空，直接返回空结果
 	if docCount == 0 {
-		c.JSON(200, gin.H{
+		response := map[string]interface{}{
 			"results": []Object{},
 			"count":   0,
-		})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
 	// 在向量数据库中搜索
 	results, err := collection.Query(ctx, req.Query, req.Limit, nil, nil)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to search: %v", err)})
+		http.Error(w, fmt.Sprintf("Failed to search: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -265,91 +276,149 @@ func searchHandler(c *gin.Context) {
 		objects = append(objects, obj)
 	}
 
-	c.JSON(200, gin.H{
+	response := map[string]interface{}{
 		"results": objects,
 		"count":   len(objects),
-	})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // 创建或更新文件夹处理器
-func createOrUpdateFolderHandler(c *gin.Context) {
+func createOrUpdateFolderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req FolderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request format"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request format", http.StatusBadRequest)
 		return
 	}
 
 	if req.Name == "" {
-		c.JSON(400, gin.H{"error": "Folder name is required"})
+		http.Error(w, "Folder name is required", http.StatusBadRequest)
 		return
 	}
 
 	// 检查是否为更新操作（通过查询参数id）
-	idParam := c.Query("id")
+	idParam := r.URL.Query().Get("id")
 	if idParam != "" {
 		// 更新文件夹
 		id, err := strconv.Atoi(idParam)
 		if err != nil {
-			c.JSON(400, gin.H{"error": "Invalid folder ID"})
+			http.Error(w, "Invalid folder ID", http.StatusBadRequest)
 			return
 		}
 
 		err = updateFolder(id, req.Name, req.Upper)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to update folder: %v", err)})
+			http.Error(w, fmt.Sprintf("Failed to update folder: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		c.JSON(200, gin.H{"message": "Folder updated successfully", "id": id})
+		response := map[string]interface{}{
+			"message": "Folder updated successfully",
+			"id":      id,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	} else {
 		// 创建新文件夹
 		id, err := createFolder(req.Name, req.Upper)
 		if err != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create folder: %v", err)})
+			http.Error(w, fmt.Sprintf("Failed to create folder: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		c.JSON(200, gin.H{"message": "Folder created successfully", "id": id})
+		response := map[string]interface{}{
+			"message": "Folder created successfully",
+			"id":      id,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
-func main() {
-	// 加载配置
-	config := loadConfig()
+// 获取文件夹内容处理器
+func getFolderContentsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-
-	// 初始化数据库
-	db, err := database.NewDatabase(config.DBPath)
+	// 从URL路径中提取文件夹ID
+	path := strings.TrimPrefix(r.URL.Path, "/folders/")
+	folderID, err := strconv.Atoi(path)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		folderID = 0 // 默认为根文件夹
 	}
-	defer db.Close()
 
-	// 初始化AI服务
-	aiService, err := services.NewAIService(config)
+	// 获取子文件夹
+	subFolders, err := getSubFolders(folderID)
 	if err != nil {
-		log.Fatalf("Failed to initialize AI service: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to get subfolders: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	// 初始化处理器
-	handler := handlers.NewHandler(db, aiService)
-
-	// 设置路由
-	setupRoutes(handler)
-
-	// 启动服务器
-	port := config.Port
-	if port == "" {
-		port = "8080"
+	// 获取文件夹中的对象
+	objects, err := getObjectsInFolder(folderID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get objects: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	fmt.Printf("Server starting on port %s...\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	response := map[string]interface{}{
+		"folder_id":   folderID,
+		"subfolders":  subFolders,
+		"objects":     objects,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// 删除文件夹处理器
+func deleteFolderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从URL路径中提取文件夹ID
+	path := strings.TrimPrefix(r.URL.Path, "/folders/")
+	folderID, err := strconv.Atoi(path)
+	if err != nil {
+		http.Error(w, "Invalid folder ID", http.StatusBadRequest)
+		return
+	}
+
+	if folderID == 0 {
+		http.Error(w, "Cannot delete root folder", http.StatusBadRequest)
+		return
+	}
+
+	err = deleteFolder(folderID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete folder: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]string{
+		"message": "Folder deleted successfully",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // 加载配置
-func loadConfig() *models.Config {
-	return &models.Config{
+func loadConfig() Config {
+	// 加载.env文件
+	godotenv.Load()
+
+	return Config{
 		QwenVLAPIKey:   getEnv("QWEN_VL_API_KEY", ""),
 		QwenTextAPIKey: getEnv("QWEN_TEXT_API_KEY", ""),
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
@@ -358,65 +427,83 @@ func loadConfig() *models.Config {
 	}
 }
 
-// 获取环境变量
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
 // 设置路由
-func setupRoutes(handler *handlers.Handler) {
-	// 设置CORS
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// 设置CORS头
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+func setupRoutes() {
+	// 设置CORS中间件
+	corsHandler := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-		// 处理预检请求
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// 根据路径分发请求
-		switch {
-		case r.URL.Path == "/upload":
-			handler.UploadHandler(w, r)
-		case r.URL.Path == "/search":
-			handler.SearchHandler(w, r)
-		case r.URL.Path == "/folders":
-			handler.CreateOrUpdateFolderHandler(w, r)
-		case r.URL.Path == "/folders/" || (len(r.URL.Path) > 9 && r.URL.Path[:9] == "/folders/"):
-			if r.Method == "GET" {
-				handler.GetFolderContentsHandler(w, r)
-			} else if r.Method == "DELETE" {
-				handler.DeleteFolderHandler(w, r)
-			} else {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
 			}
-		case r.URL.Path == "/" || r.URL.Path == "/index.html":
-			serveStaticFile(w, r, "frontend.html")
-		case r.URL.Path == "/test.html":
-			serveStaticFile(w, r, "test.html")
-		default:
+
+			next(w, r)
+		}
+	}
+
+	// 注册路由
+	http.HandleFunc("/upload", corsHandler(uploadHandler))
+	http.HandleFunc("/search", corsHandler(searchHandler))
+	http.HandleFunc("/folders", corsHandler(createOrUpdateFolderHandler))
+	http.HandleFunc("/folders/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			getFolderContentsHandler(w, r)
+		} else if r.Method == "DELETE" {
+			deleteFolderHandler(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
+	// 静态文件服务
+	http.HandleFunc("/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			http.ServeFile(w, r, "frontend.html")
+		} else if r.URL.Path == "/test.html" {
+			http.ServeFile(w, r, "test.html")
+		} else {
 			http.NotFound(w, r)
 		}
-	})
+	}))
 }
 
-// 服务静态文件
-func serveStaticFile(w http.ResponseWriter, r *http.Request, filename string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+func main() {
+	// 加载配置
+	config = loadConfig()
 
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
+	// 初始化数据库
+	if err := initDB(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
+	// 初始化向量数据库
+	if err := initVectorDB(); err != nil {
+		log.Fatalf("Failed to initialize vector database: %v", err)
 	}
 
-	http.ServeFile(w, r, filename)
+	// 设置路由
+	setupRoutes()
+
+	// 启动服务器
+	port := config.Port
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("🚀 InstaGo 服务器启动成功！\n")
+	fmt.Printf("📍 服务地址: http://localhost:%s\n", port)
+	fmt.Printf("📊 数据库路径: %s\n", config.DBPath)
+	
+	if config.QwenVLAPIKey != "" {
+		fmt.Printf("🤖 千问视觉模型: 已配置\n")
+	} else {
+		fmt.Printf("🤖 千问视觉模型: 模拟模式\n")
+	}
+	
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
