@@ -13,6 +13,13 @@ import Network
 import AppKit
 #endif
 
+// 自定义的 NSHostingView，支持立即响应鼠标点击
+class AcceptFirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true  // 允许第一次鼠标点击立即响应，不需要先获得焦点
+    }
+}
+
 // 菜单栏内容
 struct MenuBarContent: View {
     @EnvironmentObject var appState: AppState
@@ -271,6 +278,10 @@ class FloatingWindow: NSWindow {
         return false  // 不成为主窗口
     }
     
+    override var acceptsFirstResponder: Bool {
+        return true  // 接受第一响应者状态
+    }
+    
     override func awakeFromNib() {
         super.awakeFromNib()
         setupWindow()
@@ -288,6 +299,23 @@ class FloatingWindow: NSWindow {
         self.hidesOnDeactivate = false
         self.isExcludedFromWindowsMenu = true
         self.acceptsMouseMovedEvents = true
+        
+        // 设置窗口行为，允许接受键盘事件
+        self.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary
+        ]
+        
+        print("🪟 FloatingWindow 配置完成，可接受键盘输入: \(self.canBecomeKey)")
+    }
+    
+    // 重写键盘事件处理以确保能够接受Cmd+V
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            print("🎹 FloatingWindow接收到键盘事件: \(event.charactersIgnoringModifiers ?? ""), 修饰键: \(event.modifierFlags)")
+        }
+        super.sendEvent(event)
     }
 }
 
@@ -469,7 +497,7 @@ class FloatingPanelManager: ObservableObject {
     private func replaceWithRealContent(window: NSWindow, appState: AppState) {
         let contentView = FloatingButtonView()
             .environmentObject(appState)
-        let hostingView = NSHostingView(rootView: contentView)
+        let hostingView = AcceptFirstMouseHostingView(rootView: contentView)
         
         // 恢复正常的窗口设置
         window.backgroundColor = .clear
@@ -480,7 +508,7 @@ class FloatingPanelManager: ObservableObject {
         // 设置到正确位置
         setInitialPosition(window)
         
-        print("🎨 已切换到真正的SwiftUI内容")
+        print("🎨 已切换到真正的SwiftUI内容，支持立即响应点击")
     }
     
     private func setInitialPosition(_ window: NSWindow) {
@@ -734,34 +762,409 @@ struct FloatingButtonView: View {
     @State private var uploadStatus: String = ""
     @State private var showUploadIndicator = false
     @State private var pulseAnimation = false
+    @State private var rippleAnimation = false
     @State private var localLabel = ""
+    @State private var showToast = false
+    @State private var toastMessage = ""
+    @State private var singleTapWorkItem: DispatchWorkItem?
     @FocusState private var isTextFieldFocused: Bool
     
     var body: some View {
         GeometryReader { geometry in
-            HStack(spacing: 8) {  // 添加8px间距
-                // 左侧圆形按钮
-                circleButton
+            ZStack {
+                HStack(spacing: 8) {  // 添加8px间距
+                    // 左侧圆形按钮
+                    circleButton
+                    
+                    // 右侧标签输入区域（仅在展开时显示）
+                    if appState.isFloatingWindowExpanded {
+                        expandedInputArea
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)  // 确保内容居中对齐
                 
-                // 右侧标签输入区域（仅在展开时显示）
-                if appState.isFloatingWindowExpanded {
-                    expandedInputArea
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                // Toast 提示
+                if showToast {
+                    toastView
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)  // 确保内容居中对齐
         }
         .onAppear {
             localLabel = appState.imageLabel
+            setupKeyboardMonitoring()
         }
         .onChange(of: appState.imageLabel) { _, newValue in
             localLabel = newValue
+        }
+        .onChange(of: appState.isFloatingWindowSelected) { _, isSelected in
+            if isSelected {
+                // 当悬浮窗被选中时，激活键盘监听
+                activateKeyboardListening()
+            } else {
+                // 取消选中时，停止键盘监听
+                deactivateKeyboardListening()
+            }
+        }
+        .onDisappear {
+            // 清理延迟任务
+            singleTapWorkItem?.cancel()
+            singleTapWorkItem = nil
+        }
+    }
+    
+    // Toast 视图
+    private var toastView: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Text(toastMessage)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.8))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                Spacer()
+            }
+            .padding(.bottom, 10)
+        }
+    }
+    
+    // 设置键盘监听
+    private func setupKeyboardMonitoring() {
+        print("⌨️ 设置键盘监听")
+        
+        // 添加全局键盘监听器
+        NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { event in
+            if appState.isFloatingWindowSelected {
+                _ = handleKeyEvent(event)
+            }
+        }
+        
+        // 添加本地键盘监听器（用于捕获应用内的键盘事件）
+        NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            if appState.isFloatingWindowSelected {
+                if handleKeyEvent(event) {
+                    return nil // 消费事件
+                }
+            }
+            return event // 继续传递事件
+        }
+        
+        print("⌨️ 全局和本地键盘监听已设置")
+    }
+    
+    // 处理键盘事件
+    private func handleKeyEvent(_ event: NSEvent) -> Bool {
+        // 检查是否是 Cmd+V (粘贴)
+        if event.modifierFlags.contains(.command) && event.keyCode == 9 { // keyCode 9 是 'V' 键
+            print("🎹 检测到粘贴快捷键 (Cmd+V)")
+            handlePasteEvent()
+            return true // 消费事件
+        }
+        
+        // 检查是否是 Escape 键（取消选中）
+        if event.keyCode == 53 { // keyCode 53 是 ESC 键
+            print("🎹 检测到ESC键，取消选中")
+            DispatchQueue.main.async {
+                self.appState.deselectFloatingWindow()
+            }
+            return true // 消费事件
+        }
+        
+        return false // 不消费事件
+    }
+    
+    // 激活键盘监听
+    private func activateKeyboardListening() {
+        print("🎧 激活键盘监听")
+        
+        // 确保悬浮窗窗口成为焦点以接收键盘事件
+        DispatchQueue.main.async {
+            // 寻找包含 FloatingButtonView 的窗口
+            for window in NSApp.windows {
+                if window.contentView is AcceptFirstMouseHostingView<FloatingButtonView> {
+                    window.makeKey()
+                    print("🔑 悬浮窗已成为关键窗口")
+                    break
+                } else if let contentView = window.contentView,
+                          contentView.subviews.first(where: { $0 is AcceptFirstMouseHostingView<FloatingButtonView> }) != nil {
+                    window.makeKey()
+                    print("🔑 找到悬浮窗并设为关键窗口")
+                    break
+                }
+            }
+        }
+    }
+    
+    // 停止键盘监听
+    private func deactivateKeyboardListening() {
+        print("🎧 停止键盘监听")
+        // 这里暂时不需要移除监听器，因为我们需要保持全局监听
+        // 只是改变状态检查 appState.isFloatingWindowSelected
+    }
+    
+    // 处理粘贴事件
+    private func handlePasteEvent() {
+        print("📋 处理粘贴事件")
+        
+        let pasteboard = NSPasteboard.general
+        
+        // 检查粘贴板中是否有图片
+        if let imageData = getImageFromPasteboard(pasteboard) {
+            print("✅ 粘贴板中发现图片，大小: \(imageData.count) 字节")
+            uploadImageData(imageData)
+        } else {
+            print("❌ 粘贴板中没有找到图片")
+            showToastMessage("粘贴板中没有图片")
+        }
+    }
+    
+    // 增强的图片文件检查
+    private func isImageFile(_ url: URL) -> Bool {
+        let supportedExtensions = [
+            // 常见图片格式
+            "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif",
+            // 现代图片格式
+            "webp", "heic", "heif",
+            // RAW格式（部分支持）
+            "raw", "cr2", "nef", "arw"
+        ]
+        
+        let fileExtension = url.pathExtension.lowercased()
+        let isSupported = supportedExtensions.contains(fileExtension)
+        
+        print("🔍 文件类型检查: \(fileExtension) -> \(isSupported ? "支持" : "不支持")")
+        
+        return isSupported
+    }
+    
+    // 更新的上传图片到服务器方法
+    private func uploadImageToServer(imageData: Data) {
+        print("📸 开始上传图片，大小: \(imageData.count) 字节")
+        print("🏷️ 图片标签: \"\(appState.imageLabel)\"")
+        print("🔄 当前模式: \(appState.modeDescription)")
+        
+        isUploading = true
+        showUploadIndicator = false
+        
+        // 检查在线模式是否需要登录
+        if appState.requiresLogin {
+            showToastMessage("请先登录")
+            isUploading = false
+            return
+        }
+        
+        // 使用智能上传方法
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel,
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                self.isUploading = false
+                
+                switch result {
+                case .success(let response):
+                    print("✅ 拖拽图片上传成功: \(response)")
+                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 拖拽图片上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
+                    self.showUploadResult("\(errorMessage)")
+                    self.showToastMessage(error.localizedDescription)
+                }
+            }
+        }
+    }
+    
+    // 改进粘贴板图片获取，添加更多格式支持
+    private func getImageFromPasteboard(_ pasteboard: NSPasteboard) -> Data? {
+        print("📋 分析粘贴板内容...")
+        
+        // 1. 尝试获取 TIFF 格式的图片（最常见）
+        if let tiffData = pasteboard.data(forType: .tiff) {
+            print("📋 找到TIFF格式图片")
+            if let image = NSImage(data: tiffData),
+               let bitmapRep = NSBitmapImageRep(data: image.tiffRepresentation!),
+               let jpegData = bitmapRep.representation(using: .jpeg, properties: [:]) {
+                return jpegData
+            }
+        }
+        
+        // 2. 尝试获取 PNG 格式的图片
+        if let pngData = pasteboard.data(forType: .png) {
+            print("📋 找到PNG格式图片")
+            if let image = NSImage(data: pngData),
+               let bitmapRep = NSBitmapImageRep(data: image.tiffRepresentation!),
+               let jpegData = bitmapRep.representation(using: .jpeg, properties: [:]) {
+                return jpegData
+            }
+        }
+        
+        // 3. 尝试获取文件 URL（可能是图片文件）
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            print("📋 找到文件URL: \(urls.count)个")
+            for url in urls {
+                print("📋 检查文件: \(url.lastPathComponent)")
+                if isImageFile(url) {
+                    if let image = NSImage(contentsOf: url),
+                       let bitmapRep = NSBitmapImageRep(data: image.tiffRepresentation!),
+                       let jpegData = bitmapRep.representation(using: .jpeg, properties: [:]) {
+                        print("✅ 成功从文件URL获取图片")
+                        return jpegData
+                    }
+                } else {
+                    print("❌ 文件不是支持的图片格式: \(url.pathExtension)")
+                }
+            }
+        }
+        
+        // 4. 检查其他可能的图片类型，使用字符串标识符
+        let imageTypeIdentifiers = ["public.jpeg", "com.compuserve.gif", "com.microsoft.bmp"]
+        for identifier in imageTypeIdentifiers {
+            let pasteboardType = NSPasteboard.PasteboardType(identifier)
+            if let imageData = pasteboard.data(forType: pasteboardType) {
+                print("📋 找到\(identifier)格式图片")
+                if let image = NSImage(data: imageData),
+                   let bitmapRep = NSBitmapImageRep(data: image.tiffRepresentation!),
+                   let jpegData = bitmapRep.representation(using: .jpeg, properties: [:]) {
+                    return jpegData
+                }
+            }
+        }
+        
+        // 调试信息：显示粘贴板中的所有类型
+        let availableTypes = pasteboard.types?.map { $0.rawValue } ?? []
+        print("📋 粘贴板包含的类型: \(availableTypes)")
+        
+        // 检查是否有文本（提供更具体的错误信息）
+        if pasteboard.string(forType: .string) != nil {
+            print("📋 粘贴板包含文本，不是图片")
+        }
+        
+        return nil
+    }
+    
+    // 处理文件拖拽的方法
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        print("📁 处理文件拖拽")
+        
+        guard let provider = providers.first else {
+            showToastMessage("无法获取拖拽文件")
+            return false
+        }
+        
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (item, error) in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ 加载拖拽文件失败: \(error.localizedDescription)")
+                    self.showToastMessage("文件加载失败")
+                    return
+                }
+                
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                    print("❌ 无法解析拖拽的文件URL")
+                    self.showToastMessage("无法识别文件")
+                    return
+                }
+                
+                print("📎 拖拽文件URL: \(url.absoluteString)")
+                print("📎 文件扩展名: \(url.pathExtension)")
+                
+                // 验证文件类型
+                if !self.isImageFile(url) {
+                    let fileType = url.pathExtension.isEmpty ? "未知文件" : "\(url.pathExtension.uppercased())文件"
+                    print("❌ 不支持的文件类型: \(fileType)")
+                    self.showToastMessage("不支持\(fileType)，请上传图片文件")
+                    return
+                }
+                
+                // 尝试加载图片
+                guard let nsImage = NSImage(contentsOf: url) else {
+                    print("❌ 无法加载图片文件")
+                    self.showToastMessage("图片文件损坏或格式不支持")
+                    return
+                }
+                
+                // 转换为JPEG格式
+                guard let tiffData = nsImage.tiffRepresentation,
+                      let bitmapRep = NSBitmapImageRep(data: tiffData),
+                      let jpegData = bitmapRep.representation(using: .jpeg, properties: [:]) else {
+                    print("❌ 图片格式转换失败")
+                    self.showToastMessage("图片处理失败")
+                    return
+                }
+                
+                print("✅ 图片验证通过，开始上传")
+                self.uploadImageToServer(imageData: jpegData)
+            }
+        }
+        
+        return true
+    }
+    
+    // 上传图片数据（粘贴板用）
+    private func uploadImageData(_ imageData: Data) {
+        print("📤 开始上传粘贴的图片")
+        
+        isUploading = true
+        showUploadIndicator = false
+        
+        // 检查在线模式是否需要登录
+        if appState.requiresLogin {
+            showToastMessage("请先登录")
+            isUploading = false
+            return
+        }
+        
+        // 使用智能上传方法
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel,
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                self.isUploading = false
+                
+                switch result {
+                case .success(let response):
+                    print("✅ 粘贴图片上传成功: \(response)")
+                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 粘贴图片上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
+                    self.showUploadResult("\(errorMessage)")
+                    self.showToastMessage(error.localizedDescription)
+                }
+            }
+        }
+    }
+    
+    // 显示 Toast 消息
+    private func showToastMessage(_ message: String) {
+        toastMessage = message
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showToast = true
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showToast = false
+            }
         }
     }
     
     private var circleButton: some View {
         ZStack {
-            // 外圈脉冲效果
+            // 外圈脉冲效果（拖拽时显示）
             if isDragOver {
                 Circle()
                     .stroke(Color.blue.opacity(0.4), lineWidth: 3)
@@ -773,16 +1176,52 @@ struct FloatingButtonView: View {
                     )
             }
             
+            // 选中状态的波纹效果
+            if appState.isFloatingWindowSelected {
+                ZStack {
+                    // 第一层波纹
+                    Circle()
+                        .stroke(Color.blue.opacity(0.3), lineWidth: 2)
+                        .scaleEffect(rippleAnimation ? 1.8 : 1.0)
+                        .opacity(rippleAnimation ? 0.0 : 0.6)
+                    
+                    // 第二层波纹
+                    Circle()
+                        .stroke(Color.blue.opacity(0.2), lineWidth: 1.5)
+                        .scaleEffect(rippleAnimation ? 2.2 : 1.0)
+                        .opacity(rippleAnimation ? 0.0 : 0.4)
+                        .animation(
+                            .easeOut(duration: 2.0).repeatForever(autoreverses: false),
+                            value: rippleAnimation
+                        )
+                    
+                    // 第三层波纹
+                    Circle()
+                        .stroke(Color.blue.opacity(0.15), lineWidth: 1)
+                        .scaleEffect(rippleAnimation ? 2.6 : 1.0)
+                        .opacity(rippleAnimation ? 0.0 : 0.3)
+                        .animation(
+                            .easeOut(duration: 2.5).repeatForever(autoreverses: false).delay(0.3),
+                            value: rippleAnimation
+                        )
+                }
+                .animation(
+                    .easeOut(duration: 1.5).repeatForever(autoreverses: false),
+                    value: rippleAnimation
+                )
+            }
+            
             // 主按钮背景（白色圆形）
             Circle()
-                .fill(Color.white)
+                .fill(appState.isFloatingWindowSelected ? Color.blue.opacity(0.1) : Color.white)
                 .overlay(
                     Circle()
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                        .stroke(appState.isFloatingWindowSelected ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: appState.isFloatingWindowSelected ? 2 : 1)
                 )
                 .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
                 .scaleEffect(isHovered ? 1.05 : 1.0)
                 .scaleEffect(isDragOver ? 1.1 : 1.0)
+                .scaleEffect(appState.isFloatingWindowSelected ? 1.02 : 1.0)
             
             // 图标和状态
             VStack(spacing: 0) {
@@ -805,7 +1244,7 @@ struct FloatingButtonView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 24, height: 24)
-                        .foregroundColor(.gray)
+                        .foregroundColor(appState.isFloatingWindowSelected ? .blue : .gray)
                         .scaleEffect(isDragOver ? 1.1 : 1.0)
                         .opacity(isDragOver ? 0.7 : 1.0)
                 }
@@ -817,12 +1256,14 @@ struct FloatingButtonView: View {
                 isHovered = hovering
             }
         }
+        .onTapGesture(count: 2) {
+            handleDoubleTap()
+        }
         .onTapGesture {
-            toggleExpansion()
+            handleSingleTap()
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDragOver) { providers in
-            handleDrop(providers: providers)
-            return true
+            return handleDrop(providers: providers)
         }
         .onChange(of: isDragOver) { _, isDragging in
             if isDragging {
@@ -831,7 +1272,14 @@ struct FloatingButtonView: View {
                 pulseAnimation = false
             }
         }
-        .help("点击展开输入框，拖拽图片上传")
+        .onChange(of: appState.isFloatingWindowSelected) { _, isSelected in
+            if isSelected {
+                rippleAnimation = true
+            } else {
+                rippleAnimation = false
+            }
+        }
+        .help("单击选中/取消选中，双击展开输入框，拖拽图片上传")
     }
     
     private var expandedInputArea: some View {
@@ -872,6 +1320,32 @@ struct FloatingButtonView: View {
         }
     }
     
+    private func handleSingleTap() {
+        // 取消之前的单击延迟任务
+        singleTapWorkItem?.cancel()
+        
+        // 创建新的延迟任务
+        let workItem = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                self.appState.toggleFloatingWindowSelection()
+            }
+        }
+        
+        singleTapWorkItem = workItem
+        
+        // 延迟200ms执行单击，等待可能的双击
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+    }
+    
+    private func handleDoubleTap() {
+        // 取消单击延迟任务
+        singleTapWorkItem?.cancel()
+        singleTapWorkItem = nil
+        
+        // 立即执行双击操作
+        toggleExpansion()
+    }
+    
     private func toggleExpansion() {
         withAnimation(.easeInOut(duration: 0.3)) {
             if appState.isFloatingWindowExpanded {
@@ -890,67 +1364,7 @@ struct FloatingButtonView: View {
         }
     }
     
-    private func handleDrop(providers: [NSItemProvider]) {
-        guard let provider = providers.first else { return }
-        
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (item, _) in
-            if let data = item as? Data,
-               let url = URL(dataRepresentation: data, relativeTo: nil),
-               let _ = NSImage(contentsOf: url) {
-                DispatchQueue.main.async {
-                    uploadImageToServer(imageURL: url)
-                }
-            }
-        }
-    }
-    
-    private func uploadImageToServer(imageURL: URL) {
-        guard let imageData = NSImage(contentsOf: imageURL)?.tiffRepresentation,
-              let bitmapImageRep = NSBitmapImageRep(data: imageData),
-              let jpegData = bitmapImageRep.representation(using: .jpeg, properties: [:]) else {
-            print("❌ 图片处理失败")
-            showUploadResult("处理失败")
-            return
-        }
-        
-        print("📸 图片处理完成，大小: \(jpegData.count) 字节")
-        print("🏷️ 图片标签: \"\(appState.imageLabel)\"")
-        print("🔄 当前模式: \(appState.modeDescription)")
-        
-        isUploading = true
-        showUploadIndicator = false
-        
-        // 检查在线模式是否需要登录
-        if appState.requiresLogin {
-            showUploadResult("请先登录")
-            isUploading = false
-            return
-        }
-        
-        // 使用智能上传方法
-        ServerManager.shared.smartUploadImage(
-            imageData: jpegData,
-            label: appState.imageLabel,
-            isOnlineMode: appState.isOnlineMode,
-            authToken: appState.authToken
-        ) { result in
-            DispatchQueue.main.async {
-                self.isUploading = false
-                
-                switch result {
-                case .success(let response):
-                    print("✅ 上传成功: \(response)")
-                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
-                    
-                case .failure(let error):
-                    print("❌ 上传失败: \(error.localizedDescription)")
-                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
-                    self.showUploadResult("\(errorMessage): \(error.localizedDescription)")
-                }
-            }
-        }
-    }
-    
+    // 显示上传结果
     private func showUploadResult(_ status: String) {
         uploadStatus = status
         withAnimation(.easeInOut(duration: 0.3)) {

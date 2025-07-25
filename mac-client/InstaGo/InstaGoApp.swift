@@ -29,6 +29,7 @@ class AppState: ObservableObject {
     @Published var serverURL = "http://localhost:8080/upload" // 默认服务端地址
     @Published var imageLabel = "" // 图片标签文字
     @Published var isFloatingWindowExpanded = false // 悬浮窗是否展开
+    @Published var isFloatingWindowSelected = false // 悬浮窗是否被选中
     @Published var isOnlineMode = false // 是否为在线模式，默认为本地模式
     
     // 用户认证相关
@@ -70,6 +71,22 @@ class AppState: ObservableObject {
     
     func toggleFloatingWindow() {
         isFloatingWindowVisible.toggle()
+    }
+    
+    // 悬浮窗选中状态管理
+    func selectFloatingWindow() {
+        isFloatingWindowSelected = true
+        print("🎯 悬浮窗已选中")
+    }
+    
+    func deselectFloatingWindow() {
+        isFloatingWindowSelected = false
+        print("🎯 悬浮窗已取消选中")
+    }
+    
+    func toggleFloatingWindowSelection() {
+        isFloatingWindowSelected.toggle()
+        print("🎯 悬浮窗选中状态切换: \(isFloatingWindowSelected ? "选中" : "取消选中")")
     }
     
     func expandFloatingWindow() {
