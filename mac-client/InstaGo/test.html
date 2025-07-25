@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstaGo 图片管理系统测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }
+        .success {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+        .image-preview {
+            max-width: 300px;
+            max-height: 300px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .api-section {
+            margin-bottom: 40px;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🖼️ InstaGo 图片管理系统测试</h1>
+    
+    <!-- 上传图片测试 -->
+    <div class="container api-section">
+        <h2>📤 上传图片</h2>
+        <div class="form-group">
+            <label for="imageFile">选择图片文件:</label>
+            <input type="file" id="imageFile" accept="image/*">
+        </div>
+        <div class="form-group">
+            <label for="folderSelect">选择文件夹 (可选):</label>
+            <select id="folderSelect">
+                <option value="0">根文件夹</option>
+            </select>
+        </div>
+        <button onclick="uploadImage()">上传并分析图片</button>
+        <div id="uploadResult" class="result" style="display:none;"></div>
+        <img id="imagePreview" class="image-preview" style="display:none;">
+    </div>
+
+    <!-- 语义搜索测试 -->
+    <div class="container api-section">
+        <h2>🔍 语义搜索</h2>
+        <div class="form-group">
+            <label for="searchQuery">搜索查询:</label>
+            <input type="text" id="searchQuery" placeholder="例如：蓝色的天空、可爱的小猫、美丽的风景...">
+        </div>
+        <div class="form-group">
+            <label for="searchLimit">结果数量限制:</label>
+            <input type="number" id="searchLimit" value="5" min="1" max="20">
+        </div>
+        <button onclick="searchImages()">搜索图片</button>
+        <div id="searchResult" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- 文件夹管理测试 -->
+    <div class="container api-section">
+        <h2>📁 文件夹管理</h2>
+        <div class="form-group">
+            <label for="folderName">文件夹名称:</label>
+            <input type="text" id="folderName" placeholder="输入新文件夹名称">
+        </div>
+        <div class="form-group">
+            <label for="parentFolder">父文件夹:</label>
+            <select id="parentFolder">
+                <option value="0">根文件夹</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="deleteFolder">删除文件夹:</label>
+            <select id="deleteFolder">
+                <option value="">选择要删除的文件夹</option>
+            </select>
+        </div>
+        <button onclick="createFolder()">创建文件夹</button>
+        <button onclick="deleteSelectedFolder()">删除文件夹</button>
+        <button onclick="loadFolders()">刷新文件夹列表</button>
+        <div id="folderResult" class="result" style="display:none;"></div>
+    </div>
+
+    <!-- API状态检查 -->
+    <div class="container api-section">
+        <h2>🏥 系统状态</h2>
+        <button onclick="checkHealth()">检查服务器状态</button>
+        <div id="healthResult" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080';
+
+        // 检查服务器健康状态
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/ping`);
+                const data = await response.json();
+                showResult('healthResult', `✅ 服务器运行正常: ${data.message}`, 'success');
+            } catch (error) {
+                showResult('healthResult', `❌ 服务器连接失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 上传图片
+        async function uploadImage() {
+            const fileInput = document.getElementById('imageFile');
+            const folderSelect = document.getElementById('folderSelect');
+            
+            if (!fileInput.files[0]) {
+                showResult('uploadResult', '❌ 请选择一个图片文件', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = async function(e) {
+                const base64 = e.target.result.split(',')[1];
+                
+                // 显示图片预览
+                const preview = document.getElementById('imagePreview');
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                
+                try {
+                    const response = await fetch(`${API_BASE}/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            image: base64,
+                            folder_id: parseInt(folderSelect.value)
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        showResult('uploadResult', 
+                            `✅ 上传成功!\n` +
+                            `对象ID: ${data.object_id}\n` +
+                            `文件夹ID: ${data.folder_id}\n` +
+                            `描述: ${data.description}\n` +
+                            `摘要: ${data.digest}`, 'success');
+                    } else {
+                        showResult('uploadResult', `❌ 上传失败: ${data.error}`, 'error');
+                    }
+                } catch (error) {
+                    showResult('uploadResult', `❌ 请求失败: ${error.message}`, 'error');
+                }
+            };
+            
+            reader.readAsDataURL(file);
+        }
+
+        // 搜索图片
+        async function searchImages() {
+            const query = document.getElementById('searchQuery').value;
+            const limit = document.getElementById('searchLimit').value;
+            
+            if (!query.trim()) {
+                showResult('searchResult', '❌ 请输入搜索查询', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/search`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        limit: parseInt(limit)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let resultText = `✅ 搜索完成，找到 ${data.count} 个结果:\n\n`;
+                    data.results.forEach((obj, index) => {
+                        resultText += `${index + 1}. 对象ID: ${obj.id}\n`;
+                        resultText += `   文件夹ID: ${obj.folder_id}\n`;
+                        resultText += `   描述: ${obj.description.substring(0, 100)}...\n\n`;
+                    });
+                    showResult('searchResult', resultText, 'success');
+                } else {
+                    showResult('searchResult', `❌ 搜索失败: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('searchResult', `❌ 请求失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 创建文件夹
+        async function createFolder() {
+            const name = document.getElementById('folderName').value;
+            const parent = document.getElementById('parentFolder').value;
+            
+            if (!name.trim()) {
+                showResult('folderResult', '❌ 请输入文件夹名称', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/folder`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        upper: parseInt(parent)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('folderResult', `✅ ${data.message}，ID: ${data.id}`, 'success');
+                    loadFolders(); // 刷新文件夹列表
+                } else {
+                    showResult('folderResult', `❌ 创建失败: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('folderResult', `❌ 请求失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 递归获取所有文件夹
+        async function getAllFolders(folderId = 0, level = 0) {
+            try {
+                const response = await fetch(`${API_BASE}/folder/${folderId}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    return [];
+                }
+                
+                let allFolders = [];
+                
+                // 添加当前层级的文件夹
+                if (data.subfolders) {
+                    for (const folder of data.subfolders) {
+                        allFolders.push({
+                            id: folder.id,
+                            name: folder.name,
+                            level: level
+                        });
+                        
+                        // 递归获取子文件夹
+                        const subFolders = await getAllFolders(folder.id, level + 1);
+                        allFolders = allFolders.concat(subFolders);
+                    }
+                }
+                
+                return allFolders;
+            } catch (error) {
+                console.error(`获取文件夹 ${folderId} 失败:`, error);
+                return [];
+            }
+        }
+
+        // 加载文件夹列表
+        async function loadFolders() {
+            try {
+                const allFolders = await getAllFolders();
+                updateFolderSelects(allFolders);
+                showResult('folderResult', `✅ 文件夹列表已刷新，共加载 ${allFolders.length} 个文件夹`, 'success');
+            } catch (error) {
+                console.error('加载文件夹失败:', error);
+                showResult('folderResult', `❌ 加载文件夹失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 删除选中的文件夹
+        async function deleteSelectedFolder() {
+            const folderId = document.getElementById('deleteFolder').value;
+            
+            if (!folderId) {
+                showResult('folderResult', '❌ 请选择要删除的文件夹', 'error');
+                return;
+            }
+            
+            if (!confirm('确定要删除这个文件夹吗？此操作不可撤销！')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/folder/${folderId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('folderResult', `✅ ${data.message}`, 'success');
+                    loadFolders(); // 刷新文件夹列表
+                } else {
+                    showResult('folderResult', `❌ 删除失败: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('folderResult', `❌ 请求失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 更新文件夹选择器
+        function updateFolderSelects(folders) {
+            const selects = ['folderSelect', 'parentFolder'];
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                // 保留根文件夹选项
+                select.innerHTML = '<option value="0">根文件夹</option>';
+                
+                folders.forEach(folder => {
+                    const option = document.createElement('option');
+                    option.value = folder.id;
+                    // 根据层级添加缩进
+                    const indent = '　'.repeat(folder.level); // 使用全角空格作为缩进
+                    option.textContent = indent + folder.name;
+                    select.appendChild(option);
+                });
+            });
+            
+            // 更新删除文件夹下拉框（不包含根文件夹）
+            const deleteSelect = document.getElementById('deleteFolder');
+            deleteSelect.innerHTML = '<option value="">选择要删除的文件夹</option>';
+            
+            folders.forEach(folder => {
+                const option = document.createElement('option');
+                option.value = folder.id;
+                // 根据层级添加缩进
+                const indent = '　'.repeat(folder.level); // 使用全角空格作为缩进
+                option.textContent = indent + folder.name;
+                deleteSelect.appendChild(option);
+            });
+        }
+
+        // 显示结果
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+
+        // 页面加载时检查服务器状态和加载文件夹
+        window.onload = function() {
+            checkHealth();
+            loadFolders();
+        };
+    </script>
+</body>
+</html>
