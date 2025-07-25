@@ -23,11 +23,13 @@ class ServerManager: ObservableObject {
     private init() {
         print("🔧 ServerManager 初始化")
         setupNetworkMonitoring()
+        setupModeChangeObserver()
     }
     
     deinit {
         stopServer()
         monitor?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
     
     // MARK: - 服务器管理
@@ -347,6 +349,34 @@ class ServerManager: ObservableObject {
         monitor?.start(queue: queue)
     }
     
+    private func setupModeChangeObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleModeChange(_:)),
+            name: NSNotification.Name("ModeChanged"),
+            object: nil
+        )
+    }
+    
+    @objc private func handleModeChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let isOnlineMode = userInfo["isOnlineMode"] as? Bool else {
+            return
+        }
+        
+        print("🔔 收到模式切换通知: \(isOnlineMode ? "在线" : "本地")")
+        
+        if isOnlineMode {
+            // 切换到在线模式：可以停止本地服务器以节省资源
+            print("🌐 切换到在线模式，停止本地服务器")
+            stopServer()
+        } else {
+            // 切换到本地模式：启动本地服务器
+            print("🖥️ 切换到本地模式，启动本地服务器")
+            startServer()
+        }
+    }
+    
     // MARK: - 应用生命周期集成
     
     func applicationDidFinishLaunching() {
@@ -421,12 +451,52 @@ extension ServerManager {
 
 extension ServerManager {
     
+    // 智能上传：根据模式自动选择本地或在线上传
+    func smartUploadImage(imageData: Data, label: String, isOnlineMode: Bool, authToken: String? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        print("📤 开始智能上传，模式: \(isOnlineMode ? "在线" : "本地")")
+        
+        if isOnlineMode {
+            // 在线模式：检查登录状态
+            guard let token = authToken, !token.isEmpty else {
+                let error = NSError(domain: "ServerManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "在线模式需要先登录"])
+                completion(.failure(error))
+                return
+            }
+            
+            // 使用在线 API 上传，传递认证token
+            uploadImageToOnline(imageData: imageData, label: label, authToken: token, completion: completion)
+        } else {
+            // 本地模式：先检查服务器状态，然后上传
+            if !isServerRunning {
+                print("⚠️ 本地服务器未运行，尝试启动...")
+                startServer()
+                
+                // 等待服务器启动后再上传
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    if self.isServerRunning {
+                        self.uploadImageToLocal(imageData: imageData, label: label, completion: completion)
+                    } else {
+                        let error = NSError(domain: "ServerManager", code: 4, userInfo: [NSLocalizedDescriptionKey: "本地服务器启动失败"])
+                        completion(.failure(error))
+                    }
+                }
+            } else {
+                uploadImageToLocal(imageData: imageData, label: label, completion: completion)
+            }
+        }
+    }
+    
     func uploadImage(imageData: Data, label: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         guard isServerRunning else {
             completion(.failure(NSError(domain: "ServerManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "服务器未运行"])))
             return
         }
         
+        uploadImageToLocal(imageData: imageData, label: label, completion: completion)
+    }
+    
+    // 本地服务器上传
+    private func uploadImageToLocal(imageData: Data, label: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let uploadURL = URL(string: "\(serverURL)/upload")!
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "POST"
@@ -468,6 +538,102 @@ extension ServerManager {
                 }
                 
                 completion(.success(json))
+            }
+        }.resume()
+    }
+    
+    // 在线 API 上传
+    func uploadImageToOnline(imageData: Data, label: String, authToken: String? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        let uploadURL = URL(string: "https://82540c0ac675.ngrok-free.app/api/v1/screenshot")!
+        var request = URLRequest(url: uploadURL)
+        request.httpMethod = "POST"
+        
+        // 设置请求头
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "ngrok-skip-browser-warning")
+        
+        // 添加认证token（必须有）
+        guard let token = authToken, !token.isEmpty else {
+            let error = NSError(domain: "ServerManager", code: 6, userInfo: [NSLocalizedDescriptionKey: "在线上传需要认证token"])
+            completion(.failure(error))
+            return
+        }
+        
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        print("🔐 使用认证token进行上传")
+        
+        // 将图片数据转换为 base64
+        let base64Image = imageData.base64EncodedString()
+        
+        // 构建 JSON 请求体，匹配 ScreenshotCreate 模型
+        let requestBody: [String: Any] = [
+            "screenshotFileBlob": base64Image,
+            "screenshotTimestamp": Int(Date().timeIntervalSince1970),
+            "screenshotAppName": "InstaGo",
+            "screenshotTags": label.isEmpty ? "无标签" : label
+        ]
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            request.httpBody = jsonData
+            print("📦 JSON请求体已创建，大小: \(jsonData.count) 字节")
+        } catch {
+            print("❌ JSON序列化失败: \(error.localizedDescription)")
+            completion(.failure(error))
+            return
+        }
+        
+        // 设置超时时间
+        request.timeoutInterval = 30.0
+        
+        print("🌐 开始上传到在线 screenshot API: \(uploadURL)")
+        print("🏷️ 标签: \(label)")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ 在线上传失败: \(error.localizedDescription)")
+                    completion(.failure(error))
+                    return
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("📡 在线 API 响应状态码: \(httpResponse.statusCode)")
+                    
+                    // 如果是 401 未授权，说明token有问题
+                    if httpResponse.statusCode == 401 {
+                        let error = NSError(domain: "ServerManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"])
+                        completion(.failure(error))
+                        return
+                    }
+                }
+                
+                guard let data = data else {
+                    completion(.failure(NSError(domain: "ServerManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
+                    return
+                }
+                
+                // 尝试解析 JSON 响应
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        print("✅ 在线上传成功: \(json)")
+                        completion(.success(json))
+                    } else {
+                        // 如果不是 JSON，尝试解析为字符串
+                        let responseString = String(data: data, encoding: .utf8) ?? "无法解析响应"
+                        print("📄 在线 API 响应: \(responseString)")
+                        completion(.success(["message": responseString, "success": true]))
+                    }
+                } catch {
+                    let responseString = String(data: data, encoding: .utf8) ?? "无法解析响应"
+                    print("⚠️ JSON 解析失败，原始响应: \(responseString)")
+                    // 如果解析失败但状态码是成功的，也算作成功
+                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 {
+                        completion(.success(["message": "上传成功", "success": true]))
+                    } else {
+                        completion(.failure(NSError(domain: "ServerManager", code: 8, userInfo: [NSLocalizedDescriptionKey: "响应解析失败: \(responseString)"])))
+                    }
+                }
             }
         }.resume()
     }

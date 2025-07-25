@@ -49,15 +49,75 @@ struct MenuBarContent: View {
             
             Divider()
             
-            // 服务器状态显示
+            // 用户登录状态（仅在线模式显示）
+            if appState.isOnlineMode {
+                HStack {
+                    Image(systemName: appState.isLoggedIn ? "person.fill.checkmark" : "person.fill.xmark")
+                        .foregroundColor(appState.isLoggedIn ? .green : .red)
+                    
+                    if appState.isLoggedIn, let user = appState.userInfo {
+                        Text("已登录: \(user.name)")
+                            .font(.caption)
+                    } else {
+                        Text("未登录")
+                            .font(.caption)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        if appState.isLoggedIn {
+                            appState.logout()
+                        } else {
+                            appState.startLoginFlow()
+                        }
+                    }) {
+                        Text(appState.isLoggedIn ? "登出" : "登录")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(appState.isLoggedIn ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
+                            .foregroundColor(appState.isLoggedIn ? .red : .green)
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 2)
+            }
+            
+            // 模式切换
             HStack {
-                Image(systemName: serverManager.isServerRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundColor(serverManager.isServerRunning ? .green : .red)
-                Text("服务器: \(serverManager.statusDescription)")
+                Image(systemName: appState.isOnlineMode ? "cloud.fill" : "server.rack")
+                    .foregroundColor(appState.isOnlineMode ? .blue : .orange)
+                Text("模式: \(appState.modeDescription)")
                     .font(.caption)
                 Spacer()
+                Button(action: {
+                    appState.toggleMode()
+                }) {
+                    Text(appState.isOnlineMode ? "切换本地" : "切换在线")
+                        .font(.caption2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(appState.isOnlineMode ? Color.orange.opacity(0.2) : Color.blue.opacity(0.2))
+                        .foregroundColor(appState.isOnlineMode ? .orange : .blue)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.vertical, 2)
+            
+            // 服务器状态显示（仅在本地模式时显示）
+            if !appState.isOnlineMode {
+                HStack {
+                    Image(systemName: serverManager.isServerRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(serverManager.isServerRunning ? .green : .red)
+                    Text("服务器: \(serverManager.statusDescription)")
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(.vertical, 2)
+            }
             
             Divider()
             
@@ -82,6 +142,18 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.orange)
+            
+            // URL Scheme 测试按钮
+            Button(action: {
+                testURLScheme()
+            }) {
+                HStack {
+                    Image(systemName: "link.circle")
+                    Text("测试URL回调")
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.blue)
             
             Divider()
             
@@ -169,6 +241,22 @@ struct MenuBarContent: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
             testWindow.close()
             print("🧪 简单测试窗口已关闭")
+        }
+    }
+    
+    private func testURLScheme() {
+        print("🧪 测试URL Scheme回调")
+        
+        // 创建一个测试用的登录回调URL
+        let testURL = "instago://auth?token=test_token_12345&user_id=test_123&user_name=测试用户&user_email=test@example.com"
+        
+        print("🔗 测试URL: \(testURL)")
+        
+        if let url = URL(string: testURL) {
+            // 直接调用AppState的处理方法
+            appState.handleLoginCallback(url: url)
+        } else {
+            print("❌ 无法创建测试URL")
         }
     }
 }
@@ -825,93 +913,42 @@ struct FloatingButtonView: View {
             return
         }
         
-        // 转换为base64编码
-        let base64Image = jpegData.base64EncodedString()
-        print("📸 图片已转换为base64，大小: \(base64Image.count) 字符")
+        print("📸 图片处理完成，大小: \(jpegData.count) 字节")
+        print("🏷️ 图片标签: \"\(appState.imageLabel)\"")
+        print("🔄 当前模式: \(appState.modeDescription)")
         
         isUploading = true
         showUploadIndicator = false
         
-        let serverURL = "http://localhost:8080/upload"
-        guard let url = URL(string: serverURL) else {
-            print("❌ 服务器地址无效: \(serverURL)")
-            showUploadResult("服务器地址无效")
+        // 检查在线模式是否需要登录
+        if appState.requiresLogin {
+            showUploadResult("请先登录")
+            isUploading = false
             return
         }
         
-        print("🚀 开始上传图片到: \(serverURL)")
-        print("🏷️ 图片标签: \"\(appState.imageLabel)\"")
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // 创建JSON请求体，匹配Go服务器期望的格式
-        let requestBody: [String: Any] = [
-            "image": base64Image,
-            "folder_id": 0  // 默认使用根文件夹
-        ]
-        
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
-            request.httpBody = jsonData
-            print("📦 请求体已创建，大小: \(jsonData.count) 字节")
-        } catch {
-            print("❌ JSON序列化失败: \(error.localizedDescription)")
-            showUploadResult("数据格式错误")
-            return
-        }
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        // 使用智能上传方法
+        ServerManager.shared.smartUploadImage(
+            imageData: jpegData,
+            label: appState.imageLabel,
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
             DispatchQueue.main.async {
-                isUploading = false
+                self.isUploading = false
                 
-                // 详细的响应日志
-                print("📡 收到服务器响应")
-                
-                if let error = error {
-                    print("❌ 网络错误: \(error.localizedDescription)")
-                    showUploadResult("网络错误")
-                    return
-                }
-                
-                if let httpResponse = response as? HTTPURLResponse {
-                    print("🌐 HTTP状态码: \(httpResponse.statusCode)")
-                    print("📋 响应头: \(httpResponse.allHeaderFields)")
+                switch result {
+                case .success(let response):
+                    print("✅ 上传成功: \(response)")
+                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
                     
-                    if let data = data {
-                        print("📄 响应数据大小: \(data.count) 字节")
-                        
-                        // 尝试解析并输出响应内容
-                        if let responseString = String(data: data, encoding: .utf8) {
-                            print("📝 服务器响应内容:")
-                            print(responseString)
-                        }
-                        
-                        // 尝试解析JSON响应
-                        if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            print("📊 解析后的JSON响应:")
-                            for (key, value) in jsonResponse {
-                                print("   \(key): \(value)")
-                            }
-                        }
-                    } else {
-                        print("⚠️ 响应数据为空")
-                    }
-                    
-                    if httpResponse.statusCode == 200 {
-                        showUploadResult("上传成功")
-                        print("✅ 图片上传成功，标签: \"\(appState.imageLabel)\"")
-                    } else {
-                        showUploadResult("服务器错误(\(httpResponse.statusCode))")
-                        print("❌ 服务器返回错误状态码: \(httpResponse.statusCode)")
-                    }
-                } else {
-                    print("❌ 无效的HTTP响应")
-                    showUploadResult("响应错误")
+                case .failure(let error):
+                    print("❌ 上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
+                    self.showUploadResult("\(errorMessage): \(error.localizedDescription)")
                 }
             }
-        }.resume()
+        }
     }
     
     private func showUploadResult(_ status: String) {
