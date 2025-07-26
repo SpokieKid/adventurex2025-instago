@@ -27,7 +27,7 @@ class AcceptFirstMouseHostingView<Content: View>: NSHostingView<Content> {
 // 菜单栏内容
 struct MenuBarContent: View {
     @EnvironmentObject var appState: AppState
-    // @EnvironmentObject var serverManager: ServerManager
+    @EnvironmentObject var serverManager: ServerManager
     @State private var tempLabel = ""
     @State private var hasInitialized = false
     
@@ -60,75 +60,75 @@ struct MenuBarContent: View {
             
             Divider()
             
-            // 用户登录状态（仅在线模式显示） - 暂时禁用
-            // if appState.isOnlineMode {
-            //     HStack {
-            //         Image(systemName: appState.isLoggedIn ? "person.fill.checkmark" : "person.fill.xmark")
-            //             .foregroundColor(appState.isLoggedIn ? .green : .red)
-            //         
-            //         if appState.isLoggedIn, let user = appState.userInfo {
-            //             Text("已登录: \(user.name)")
-            //                 .font(.caption)
-            //         } else {
-            //             Text("未登录")
-            //                 .font(.caption)
-            //         }
-            //         
-            //         Spacer()
-            //         
-            //         Button(action: {
-            //             if appState.isLoggedIn {
-            //                 appState.logout()
-            //             } else {
-            //                 appState.startLoginFlow()
-            //             }
-            //         }) {
-            //             Text(appState.isLoggedIn ? "登出" : "登录")
-            //                 .font(.caption2)
-            //                 .padding(.horizontal, 8)
-            //                 .padding(.vertical, 2)
-            //                 .background(appState.isLoggedIn ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
-            //                 .foregroundColor(appState.isLoggedIn ? .red : .green)
-            //                 .cornerRadius(4)
-            //         }
-            //         .buttonStyle(.plain)
-            //     }
-            //     .padding(.vertical, 2)
-            // }
+            // 用户登录状态（仅在线模式显示）
+            if appState.isOnlineMode {
+                HStack {
+                    Image(systemName: appState.isLoggedIn ? "person.fill.checkmark" : "person.fill.xmark")
+                        .foregroundColor(appState.isLoggedIn ? .green : .red)
+                    
+                    if appState.isLoggedIn, let user = appState.userInfo {
+                        Text("已登录: \(user.name)")
+                            .font(.caption)
+                    } else {
+                        Text("未登录")
+                            .font(.caption)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        if appState.isLoggedIn {
+                            appState.logout()
+                        } else {
+                            appState.startLoginFlow()
+                        }
+                    }) {
+                        Text(appState.isLoggedIn ? "登出" : "登录")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(appState.isLoggedIn ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
+                            .foregroundColor(appState.isLoggedIn ? .red : .green)
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 2)
+            }
             
-            // 模式切换 - 暂时禁用
-            // HStack {
-            //     Image(systemName: appState.isOnlineMode ? "cloud.fill" : "server.rack")
-            //         .foregroundColor(appState.isOnlineMode ? .blue : .orange)
-            //     Text("模式: \(appState.modeDescription)")
-            //         .font(.caption)
-            //     Spacer()
-            //     Button(action: {
-            //         appState.toggleMode()
-            //     }) {
-            //         Text(appState.isOnlineMode ? "切换本地" : "切换在线")
-            //             .font(.caption2)
-            //             .padding(.horizontal, 8)
-            //             .padding(.vertical, 2)
-            //             .background(appState.isOnlineMode ? Color.orange.opacity(0.2) : Color.blue.opacity(0.2))
-            //             .foregroundColor(appState.isOnlineMode ? .orange : .blue)
-            //             .cornerRadius(4)
-            //     }
-            //     .buttonStyle(.plain)
-            // }
-            // .padding(.vertical, 2)
+            // 模式切换
+            HStack {
+                Image(systemName: appState.isOnlineMode ? "cloud.fill" : "server.rack")
+                    .foregroundColor(appState.isOnlineMode ? .blue : .orange)
+                Text("模式: \(appState.modeDescription)")
+                    .font(.caption)
+                Spacer()
+                Button(action: {
+                    appState.toggleMode()
+                }) {
+                    Text(appState.isOnlineMode ? "切换本地" : "切换在线")
+                        .font(.caption2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(appState.isOnlineMode ? Color.orange.opacity(0.2) : Color.blue.opacity(0.2))
+                        .foregroundColor(appState.isOnlineMode ? .orange : .blue)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 2)
             
             // 服务器状态显示（仅在本地模式时显示）
-            // if !appState.isOnlineMode {
-            //     HStack {
-            //         Image(systemName: serverManager.isServerRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
-            //             .foregroundColor(serverManager.isServerRunning ? .green : .red)
-            //         Text("服务器: \(serverManager.statusDescription)")
-            //             .font(.caption)
-            //         Spacer()
-            //     }
-            //     .padding(.vertical, 2)
-            // }
+            if !appState.isOnlineMode {
+                HStack {
+                    Image(systemName: serverManager.isServerRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(serverManager.isServerRunning ? .green : .red)
+                    Text("服务器: \(serverManager.statusDescription)")
+                        .font(.caption)
+                    Spacer()
+                }
+                .padding(.vertical, 2)
+            }
             
             Divider()
             
@@ -821,28 +821,25 @@ class ScreenshotManager: ObservableObject {
         }
         
         // 使用现有的智能上传方法
-        // ServerManager.shared.smartUploadImage(
-        //     imageData: imageData,
-        //     label: appState.imageLabel.isEmpty ? "截图" : appState.imageLabel,  // 如果没有标签就用"截图"
-        //     isOnlineMode: appState.isOnlineMode,
-        //     authToken: appState.authToken
-        // ) { result in
-        //     DispatchQueue.main.async {
-        //         switch result {
-        //         case .success(let response):
-        //             print("✅ 截图上传成功: \(response)")
-        //             self.showToastMessage(appState.isOnlineMode ? "截图在线上传成功" : "截图本地上传成功")
-        //             
-        //         case .failure(let error):
-        //             print("❌ 截图上传失败: \(error.localizedDescription)")
-        //             let errorMessage = appState.isOnlineMode ? "截图在线上传失败" : "截图本地上传失败"
-        //             self.showToastMessage("\(errorMessage): \(error.localizedDescription)")
-        //         }
-        //     }
-        // }
-        
-        // 临时禁用上传功能
-        showToastMessage("上传功能已暂时禁用")
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel.isEmpty ? "截图" : appState.imageLabel,  // 如果没有标签就用"截图"
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let response):
+                    print("✅ 截图上传成功: \(response)")
+                    self.showToastMessage(appState.isOnlineMode ? "截图在线上传成功" : "截图本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 截图上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "截图在线上传失败" : "截图本地上传失败"
+                    self.showToastMessage("\(errorMessage): \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     private func showToastMessage(_ message: String) {
@@ -1506,32 +1503,28 @@ struct FloatingButtonView: View {
         }
         
         // 使用智能上传方法
-        // ServerManager.shared.smartUploadImage(
-        //     imageData: imageData,
-        //     label: appState.imageLabel,
-        //     isOnlineMode: appState.isOnlineMode,
-        //     authToken: appState.authToken
-        // ) { result in
-        //     DispatchQueue.main.async {
-        //         self.isUploading = false
-        //         
-        //         switch result {
-        //         case .success(let response):
-        //             print("✅ 拖拽图片上传成功: \(response)")
-        //             self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
-        //             
-        //         case .failure(let error):
-        //             print("❌ 拖拽图片上传失败: \(error.localizedDescription)")
-        //             let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
-        //             self.showUploadResult("\(errorMessage)")
-        //             self.showToastMessage(error.localizedDescription)
-        //         }
-        //     }
-        // }
-        
-        // 临时禁用上传功能
-        self.isUploading = false
-        self.showToastMessage("上传功能已暂时禁用")
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel,
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                self.isUploading = false
+                
+                switch result {
+                case .success(let response):
+                    print("✅ 拖拽图片上传成功: \(response)")
+                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 拖拽图片上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
+                    self.showUploadResult("\(errorMessage)")
+                    self.showToastMessage(error.localizedDescription)
+                }
+            }
+        }
     }
     
     // 改进粘贴板图片获取，添加更多格式支持
@@ -1676,32 +1669,28 @@ struct FloatingButtonView: View {
         }
         
         // 使用智能上传方法
-        // ServerManager.shared.smartUploadImage(
-        //     imageData: imageData,
-        //     label: appState.imageLabel,
-        //     isOnlineMode: appState.isOnlineMode,
-        //     authToken: appState.authToken
-        // ) { result in
-        //     DispatchQueue.main.async {
-        //         self.isUploading = false
-        //         
-        //         switch result {
-        //         case .success(let response):
-        //             print("✅ 粘贴图片上传成功: \(response)")
-        //             self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
-        //             
-        //         case .failure(let error):
-        //             print("❌ 粘贴图片上传失败: \(error.localizedDescription)")
-        //             let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
-        //             self.showUploadResult("\(errorMessage)")
-        //             self.showToastMessage(error.localizedDescription)
-        //         }
-        //     }
-        // }
-        
-        // 临时禁用上传功能
-        self.isUploading = false
-        self.showToastMessage("上传功能已暂时禁用")
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel,
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                self.isUploading = false
+                
+                switch result {
+                case .success(let response):
+                    print("✅ 粘贴图片上传成功: \(response)")
+                    self.showUploadResult(appState.isOnlineMode ? "在线上传成功" : "本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 粘贴图片上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "在线上传失败" : "本地上传失败"
+                    self.showUploadResult("\(errorMessage)")
+                    self.showToastMessage(error.localizedDescription)
+                }
+            }
+        }
     }
     
     // 显示 Toast 消息
