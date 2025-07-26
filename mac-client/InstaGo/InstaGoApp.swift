@@ -38,6 +38,11 @@ class AppState: ObservableObject {
     @Published var authToken: String? = nil // 认证access token
     @Published var refreshToken: String? = nil // 刷新token
     
+    // 回调处理状态
+    private var lastCallbackURL: String? = nil // 最后处理的回调URL
+    private var callbackProcessingTime: Date? = nil // 上次处理回调的时间
+    private let callbackCooldownDuration: TimeInterval = 5.0 // 回调处理冷却时间（秒）
+    
     // 在线 API 地址
           let onlineAPIURL = "https://instago-server-fbtibvhmga-uc.a.run.app/api/v1/screenshot"
     let loginWebURL = "https://instago-manage.vercel.app/login" // 登录页面地址
@@ -181,10 +186,80 @@ class AppState: ObservableObject {
         print("🔔 AppState收到登录回调: \(url)")
         print("🔍 完整URL: \(url.absoluteString)")
         
+        // 检查是否是重复的回调请求
+        let currentURLString = url.absoluteString
+        let currentTime = Date()
+        
+        // 如果是相同的URL且在冷却时间内，忽略此请求
+        if let lastURL = lastCallbackURL,
+           let lastTime = callbackProcessingTime,
+           lastURL == currentURLString,
+           currentTime.timeIntervalSince(lastTime) < callbackCooldownDuration {
+            print("⏰ 检测到重复回调请求，忽略处理（冷却时间: \(callbackCooldownDuration)秒）")
+            print("   上次处理时间: \(lastTime)")
+            print("   当前时间: \(currentTime)")
+            print("   时间间隔: \(currentTime.timeIntervalSince(lastTime))秒")
+            return
+        }
+        
+        // 如果用户已经登录，询问是否要重新登录
+        if isLoggedIn {
+            print("⚠️ 用户已登录，收到新的登录回调")
+            print("   当前用户: \(userInfo?.name ?? "未知")")
+            
+            // 显示用户选择对话框
+            DispatchQueue.main.async {
+                self.showReloginDialog(for: url)
+            }
+            return
+        }
+        
+        // 记录此次回调处理
+        lastCallbackURL = currentURLString
+        callbackProcessingTime = currentTime
+        
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let queryItems = components.queryItems else {
             print("❌ 无法解析回调URL")
             print("🔍 URL Components: \(URLComponents(url: url, resolvingAgainstBaseURL: false)?.debugDescription ?? "nil")")
+            return
+        }
+        
+        // 处理登录回调
+        processLoginCallback(url: url)
+    }
+    
+    // 显示重新登录对话框
+    private func showReloginDialog(for url: URL) {
+        let alert = NSAlert()
+        alert.messageText = "用户已登录"
+        alert.informativeText = "检测到新的登录回调，但您已经登录。是否要重新登录？"
+        alert.addButton(withTitle: "重新登录")
+        alert.addButton(withTitle: "保持当前登录")
+        alert.alertStyle = .warning
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            print("🔄 用户选择重新登录")
+            // 先登出，然后处理新的回调
+            logout()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.processLoginCallback(url: url)
+            }
+        } else {
+            print("🚫 用户选择保持当前登录，忽略回调")
+        }
+    }
+    
+    // 处理登录回调的核心逻辑
+    private func processLoginCallback(url: URL) {
+        // 记录此次回调处理
+        lastCallbackURL = url.absoluteString
+        callbackProcessingTime = Date()
+        
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            print("❌ 无法解析回调URL")
             return
         }
         
@@ -240,7 +315,7 @@ class AppState: ObservableObject {
         // 更新登录状态
         DispatchQueue.main.async {
             self.authToken = authToken
-            self.refreshToken = refreshTokenValue // 可能为nil，这是正常的
+            self.refreshToken = refreshTokenValue
             self.userInfo = user
             self.isLoggedIn = true
             
@@ -269,6 +344,12 @@ class AppState: ObservableObject {
             
             // 清除本地保存的登录状态
             self.clearSavedAuthState()
+            
+            // 清除回调记录，允许新的登录
+            self.lastCallbackURL = nil
+            self.callbackProcessingTime = nil
+            
+            print("🧹 已清除登录状态和回调记录")
         }
     }
     
@@ -372,8 +453,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🎯 应用启动完成")
         
-        // 设置应用不在Dock中显示
-        NSApp.setActivationPolicy(.accessory)
+        // 设置应用不在Dock中显示（由于Info.plist中设置了LSUIElement，这行可以注释掉）
+        // NSApp.setActivationPolicy(.accessory)
         
         // 注册URL事件处理
         NSAppleEventManager.shared().setEventHandler(
@@ -402,6 +483,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false // 即使关闭所有窗口也不退出应用
     }
     
+    // 当应用已经运行并接收到URL scheme时调用
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        print("🔄 应用重新打开请求，有可见窗口: \(flag)")
+        
+        // 如果没有可见窗口，显示悬浮窗
+        if !flag {
+            DispatchQueue.main.async {
+                FloatingPanelManager.shared.showPanel()
+            }
+        }
+        
+        return true
+    }
+    
     // 处理URL Scheme回调
     @objc func handleURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
         guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -414,13 +509,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("🔍 URL Components - scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil")")
         print("🔍 Query: \(url.query ?? "nil")")
         
+        // 检查当前运行的InstaGo实例数量
+        let runningInstances = getRunningInstanceCount()
+        print("📊 当前运行的InstaGo实例数: \(runningInstances)")
+        
+        if runningInstances > 1 {
+            print("⚠️ 检测到多个InstaGo实例，尝试关闭额外的实例")
+            terminateExtraInstances()
+        }
+        
+        // 激活应用到前台（确保应用获得焦点）
+        NSApp.activate(ignoringOtherApps: true)
+        
         // 检查是否为登录回调
         if url.scheme == "instago" && url.host == "auth" {
-            print("✅ 确认为登录回调，发送通知")
+            print("✅ 确认为登录回调，激活应用并发送通知")
+            
+            // 确保悬浮窗可见（如果需要的话）
+            DispatchQueue.main.async {
+                FloatingPanelManager.shared.showPanel()
+            }
+            
             // 通过通知发送登录回调
             notifyLoginCallback(url: url)
         } else {
             print("⚠️ 不是预期的登录回调格式")
+        }
+    }
+    
+    // 获取当前运行的InstaGo实例数量
+    private func getRunningInstanceCount() -> Int {
+        let runningApps = NSWorkspace.shared.runningApplications
+        let instagoInstances = runningApps.filter { app in
+            return app.bundleIdentifier == "adxinstago.InstaGo" ||
+                   app.localizedName?.contains("InstaGo") == true
+        }
+        return instagoInstances.count
+    }
+    
+    // 终止额外的实例，保留当前实例
+    private func terminateExtraInstances() {
+        let runningApps = NSWorkspace.shared.runningApplications
+        let instagoInstances = runningApps.filter { app in
+            return app.bundleIdentifier == "adxinstago.InstaGo" ||
+                   app.localizedName?.contains("InstaGo") == true
+        }
+        
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        
+        for app in instagoInstances {
+            if app.processIdentifier != currentPID {
+                print("🔚 尝试终止额外的InstaGo实例 (PID: \(app.processIdentifier))")
+                app.terminate()
+            }
         }
     }
     

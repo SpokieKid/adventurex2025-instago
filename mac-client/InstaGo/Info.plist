@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 防止多实例启动 -->
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+	
+	<!-- URL Scheme 配置 -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -15,5 +20,17 @@
 			</array>
 		</dict>
 	</array>
+	
+	<!-- 应用类型配置 - 后台应用 -->
+	<key>LSUIElement</key>
+	<true/>
+	
+	<!-- 支持自动终止 -->
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	
+	<!-- 支持突然终止 -->
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
 </dict>
 </plist>
