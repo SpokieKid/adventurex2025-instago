@@ -11,13 +11,13 @@ import SwiftUI
 struct InstaGoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
-    @StateObject private var serverManager = ServerManager.shared
+    // @StateObject private var serverManager = ServerManager.shared
     
     var body: some Scene {
         MenuBarExtra("InstaGo", image: "instago-icon") {
             MenuBarContent()
                 .environmentObject(appState)
-                .environmentObject(serverManager)
+                // .environmentObject(serverManager)
         }
         .menuBarExtraStyle(.window)
     }
@@ -374,27 +374,31 @@ class AppState: ObservableObject {
         print("🔄 尝试使用refresh token刷新access token")
         
         // 调用ServerManager的刷新方法
-        ServerManager.shared.refreshToken(refreshToken: refreshToken) { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let tokens):
-                    print("✅ Token刷新成功")
-                    self?.authToken = tokens["access_token"] as? String
-                    if let newRefreshToken = tokens["refresh_token"] as? String {
-                        self?.refreshToken = newRefreshToken
-                        print("🔄 同时更新了refresh token")
-                    }
-                    self?.saveAuthState()
-                    completion(true)
-                    
-                case .failure(let error):
-                    print("❌ Token刷新失败: \(error.localizedDescription)")
-                    // 刷新失败，可能refresh token也过期了，需要重新登录
-                    self?.logout()
-                    completion(false)
-                }
-            }
-        }
+        // ServerManager.shared.refreshToken(refreshToken: refreshToken) { [weak self] result in
+        //     DispatchQueue.main.async {
+        //         switch result {
+        //         case .success(let tokens):
+        //             print("✅ Token刷新成功")
+        //             self?.authToken = tokens["access_token"] as? String
+        //             if let newRefreshToken = tokens["refresh_token"] as? String {
+        //                 self?.refreshToken = newRefreshToken
+        //                 print("🔄 同时更新了refresh token")
+        //             }
+        //             self?.saveAuthState()
+        //             completion(true)
+        //             
+        //         case .failure(let error):
+        //             print("❌ Token刷新失败: \(error.localizedDescription)")
+        //             // 刷新失败，可能refresh token也过期了，需要重新登录
+        //             self?.logout()
+        //             completion(false)
+        //         }
+        //     }
+        // }
+        
+        // 临时禁用Token刷新功能
+        print("⚠️ Token刷新功能已暂时禁用")
+        completion(false)
     }
     
     // MARK: - 本地存储
@@ -469,14 +473,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("🏗️ FloatingPanelManager 单例已创建")
         
         // 启动服务器
-        ServerManager.shared.applicationDidFinishLaunching()
+        // ServerManager.shared.applicationDidFinishLaunching()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         print("👋 应用即将退出")
         
         // 停止服务器
-        ServerManager.shared.applicationWillTerminate()
+        // ServerManager.shared.applicationWillTerminate()
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
