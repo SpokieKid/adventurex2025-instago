@@ -1,0 +1,37 @@
+{
+  "configurations" : [
+    {
+      "id" : "6DB5EB1A-5AA8-498B-8FEC-5367249802ED",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:InstaGo.xcodeproj",
+      "identifier" : "A248B59D2E30A6270068B89C",
+      "name" : "InstaGo"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:InstaGo.xcodeproj",
+        "identifier" : "A248B5AB2E30A6270068B89C",
+        "name" : "InstaGoTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:InstaGo.xcodeproj",
+        "identifier" : "A248B5B52E30A6270068B89C",
+        "name" : "InstaGoUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

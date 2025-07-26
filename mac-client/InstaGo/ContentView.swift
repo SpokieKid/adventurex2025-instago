@@ -155,7 +155,8 @@ struct MenuBarContent: View {
             .foregroundColor(.purple)
             .help("或按 Cmd+Shift+X")
             
-            // 调试按钮
+            // 调试按钮 - 发布版本中隐藏
+            /*
             Button(action: {
                 createTestWindow()
             }) {
@@ -167,7 +168,7 @@ struct MenuBarContent: View {
             .buttonStyle(.plain)
             .foregroundColor(.orange)
             
-            // URL Scheme 测试按钮
+            // URL Scheme 测试按钮 - 发布版本中隐藏
             Button(action: {
                 testURLScheme()
             }) {
@@ -178,6 +179,7 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(.blue)
+            */
             
             Divider()
             
@@ -199,6 +201,14 @@ struct MenuBarContent: View {
                 ScreenshotManager.shared.initialize(with: appState)
                 
                 hasInitialized = true
+            } else {
+                // 即使已经初始化，也检查悬浮窗是否应该显示但实际没显示
+                if appState.isFloatingWindowVisible {
+                    print("🔍 检查悬浮窗显示状态")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        FloatingPanelManager.shared.showPanel()
+                    }
+                }
             }
         }
     }
@@ -212,6 +222,8 @@ struct MenuBarContent: View {
         appState.toggleFloatingWindow()
     }
     
+    // 发布版本中隐藏的调试方法
+    /*
     private func createTestWindow() {
         print("🔨 手动创建测试窗口")
         
@@ -288,6 +300,7 @@ struct MenuBarContent: View {
             print("❌ 无法创建测试URL")
         }
     }
+    */
 }
 
 // 自定义窗口类，支持键盘输入
@@ -911,15 +924,29 @@ class FloatingPanelManager: ObservableObject {
     
     func initialize(with appState: AppState) {
         print("🎯 开始初始化悬浮窗，AppState: \(appState)")
+        print("🔍 悬浮窗可见状态: \(appState.isFloatingWindowVisible)")
+        
+        // 检查是否已经初始化
+        if self.appState != nil {
+            print("⚠️ 悬浮窗已经初始化，跳过重复初始化")
+            return
+        }
+        
         self.appState = appState
         
-        // 延迟创建，确保应用完全启动
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        // 延迟创建，确保应用完全启动（减少延迟以加快显示）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.createFloatingWindow()
             
             // 再次延迟显示，确保创建完成
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.forceShowPanel()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                // 根据 AppState 的状态决定是否显示悬浮窗
+                if appState.isFloatingWindowVisible {
+                    print("✅ AppState 显示悬浮窗，开始显示")
+                    self.forceShowPanel()
+                } else {
+                    print("⏸️ AppState 隐藏悬浮窗，跳过显示")
+                }
             }
         }
         
@@ -929,6 +956,13 @@ class FloatingPanelManager: ObservableObject {
     // 添加一个直接初始化的方法作为备用
     func initializeDirect(with appState: AppState) {
         print("🎯 直接初始化悬浮窗")
+        
+        // 检查是否已经初始化
+        if self.appState != nil && windowController?.window != nil {
+            print("⚠️ 悬浮窗已经初始化，跳过重复初始化")
+            return
+        }
+        
         self.appState = appState
         createFloatingWindow()
         forceShowPanel()
@@ -936,12 +970,18 @@ class FloatingPanelManager: ObservableObject {
     }
     
     private func createFloatingWindow() {
+        // 检查是否已经存在窗口，避免重复创建
+        if windowController?.window != nil {
+            print("⚠️ 悬浮窗已存在，跳过创建")
+            return
+        }
+        
         guard let appState = appState else { 
             print("❌ createFloatingWindow: AppState为空")
             return 
         }
         
-        print("🏗️ 创建悬浮窗窗口")
+        print("🏗️ 直接创建悬浮窗窗口")
         
         // 使用自定义窗口类
         let window = FloatingWindow(
@@ -953,9 +993,9 @@ class FloatingPanelManager: ObservableObject {
         
         // 基本窗口设置
         window.level = .floating
-        window.backgroundColor = NSColor.red.withAlphaComponent(0.8)  // 临时设置红色背景以便调试
+        window.backgroundColor = .clear
         window.isOpaque = false
-        window.hasShadow = true  // 临时开启阴影以便看到
+        window.hasShadow = false
         window.ignoresMouseEvents = false
         window.isMovableByWindowBackground = true
         window.canHide = false
@@ -970,88 +1010,50 @@ class FloatingPanelManager: ObservableObject {
             .stationary
         ]
         
-        // 创建一个简单的测试内容
-        let testView = NSView(frame: NSRect(x: 0, y: 0, width: compactSize.width, height: compactSize.height))
-        testView.wantsLayer = true
-        testView.layer?.backgroundColor = NSColor.blue.withAlphaComponent(0.8).cgColor
-        testView.layer?.cornerRadius = 32
+        // 直接创建真正的SwiftUI内容
+        let contentView = FloatingButtonView()
+            .environmentObject(appState)
+        let hostingView = AcceptFirstMouseHostingView(rootView: contentView)
         
-        // 添加文本标签用于测试
-        let textField = NSTextField(labelWithString: "TEST")
-        textField.frame = NSRect(x: 20, y: 30, width: 40, height: 20)
-        textField.textColor = .white
-        textField.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        testView.addSubview(textField)
+        window.contentView = hostingView
         
-        window.contentView = testView
-        
-        print("🎨 测试内容创建完成")
+        print("🎨 SwiftUI内容创建完成")
         
         // 创建窗口控制器
         windowController = NSWindowController(window: window)
         
-        // 设置到屏幕中心进行测试
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let centerX = screenFrame.midX - compactSize.width / 2
-            let centerY = screenFrame.midY - compactSize.height / 2
-            window.setFrameOrigin(CGPoint(x: centerX, y: centerY))
-            print("🎯 设置到屏幕中心: (\(centerX), \(centerY))")
-        }
+        // 设置到右上角位置
+        setInitialPosition(window)
         
         // 立即显示窗口
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         
-        print("✅ 测试窗口创建完成")
+        print("✅ 悬浮窗创建完成")
         print("   - 创建后可见状态: \(window.isVisible)")
         print("   - 创建后位置: \(window.frame)")
-        print("   - 窗口背景色: \(window.backgroundColor?.description ?? "无")")
         print("   - 窗口透明度: \(window.alphaValue)")
         
-        // 延迟检查窗口状态
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            print("🔍 延迟检查窗口状态:")
-            print("   - 0.5秒后可见状态: \(window.isVisible)")
-            print("   - 窗口在屏幕坐标: \(window.frame)")
+        // 验证窗口是否在应用窗口列表中
+        let allWindows = NSApplication.shared.windows
+        let isInWindowList = allWindows.contains(window)
+        print("   - 窗口在应用列表中: \(isInWindowList)")
+        
+        // 简短延迟检查最终状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            print("🔍 最终检查窗口状态:")
+            print("   - 可见状态: \(window.isVisible)")
+            print("   - 窗口位置: \(window.frame)")
             
             if window.isVisible {
-                print("✅ 测试窗口显示成功！")
-                
-                // 如果测试窗口显示成功，替换为真正的SwiftUI内容
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    print("🔄 切换到真正的SwiftUI内容")
-                    self.replaceWithRealContent(window: window, appState: appState)
-                }
+                print("✅ 悬浮窗显示成功！")
             } else {
-                print("❌ 测试窗口显示失败")
-                
-                // 列出所有窗口进行调试
-                print("🪟 当前所有应用窗口:")
-                for (index, appWindow) in NSApplication.shared.windows.enumerated() {
-                    print("   [\(index)] 级别=\(appWindow.level.rawValue), 可见=\(appWindow.isVisible), 框架=\(appWindow.frame)")
-                }
+                print("❌ 悬浮窗显示失败")
             }
         }
     }
     
-    // 替换为真正的SwiftUI内容
-    private func replaceWithRealContent(window: NSWindow, appState: AppState) {
-        let contentView = FloatingButtonView()
-            .environmentObject(appState)
-        let hostingView = AcceptFirstMouseHostingView(rootView: contentView)
-        
-        // 恢复正常的窗口设置
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        
-        window.contentView = hostingView
-        
-        // 设置到正确位置
-        setInitialPosition(window)
-        
-        print("🎨 已切换到真正的SwiftUI内容，支持立即响应点击")
-    }
+
     
     private func setInitialPosition(_ window: NSWindow) {
         guard let screen = NSScreen.main else {
@@ -1802,7 +1804,7 @@ struct FloatingButtonView: View {
                     Image("instago-icon")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 24, height: 24)
+                        .frame(width: 38, height: 38)
                         .foregroundColor(appState.isFloatingWindowSelected ? .blue : .gray)
                         .scaleEffect(isDragOver ? 1.1 : 1.0)
                         .opacity(isDragOver ? 0.7 : 1.0)

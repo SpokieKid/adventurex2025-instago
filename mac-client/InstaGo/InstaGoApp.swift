@@ -14,7 +14,7 @@ struct InstaGoApp: App {
     @StateObject private var serverManager = ServerManager.shared
     
     var body: some Scene {
-        MenuBarExtra("InstaGo", systemImage: "photo.circle") {
+        MenuBarExtra("InstaGo", image: "instago-icon") {
             MenuBarContent()
                 .environmentObject(appState)
                 .environmentObject(serverManager)
@@ -35,15 +35,16 @@ class AppState: ObservableObject {
     // 用户认证相关
     @Published var isLoggedIn = false // 用户是否已登录
     @Published var userInfo: UserInfo? = nil // 用户信息
-    @Published var authToken: String? = nil // 认证token
+    @Published var authToken: String? = nil // 认证access token
+    @Published var refreshToken: String? = nil // 刷新token
     
     // 在线 API 地址
-          let onlineAPIURL = "https://instago-manage.vercel.app/api/v1/screenshot"
+          let onlineAPIURL = "https://instago-server-fbtibvhmga-uc.a.run.app/api/v1/screenshot"
     let loginWebURL = "https://instago-manage.vercel.app/login" // 登录页面地址
     
     init() {
-        // 延迟发送初始化通知
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        // 延迟发送初始化通知（减少延迟以加快启动）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NotificationCenter.default.post(name: NSNotification.Name("InitializeFloatingPanel"), object: self)
             print("🚀 发送FloatingPanel初始化通知")
         }
@@ -75,6 +76,21 @@ class AppState: ObservableObject {
                 self?.handleLoginCallback(url: url)
             } else {
                 print("❌ 通知中没有找到URL")
+            }
+        }
+        
+        // 监听token刷新请求通知
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("RequestTokenRefresh"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            print("📬 AppState收到RequestTokenRefresh通知")
+            if let completionBlock = notification.userInfo?["completion"] as? (Bool, String?) -> Void {
+                self?.refreshAccessToken { success in
+                    let newToken = success ? self?.authToken : nil
+                    completionBlock(success, newToken)
+                }
             }
         }
         
@@ -178,6 +194,7 @@ class AppState: ObservableObject {
         }
         
         var token: String?
+        var refreshTokenValue: String?
         var userName: String?
         var userEmail: String?
         var userId: String?
@@ -185,9 +202,12 @@ class AppState: ObservableObject {
         // 解析查询参数
         for item in queryItems {
             switch item.name {
-            case "token":
+            case "token", "access_token":
                 token = item.value
-                print("🔐 找到token: \(token?.prefix(20) ?? "nil")...")
+                print("🔐 找到access token: \(token?.prefix(20) ?? "nil")...")
+            case "refresh_token":
+                refreshTokenValue = item.value
+                print("🔄 找到refresh token: \(refreshTokenValue?.prefix(20) ?? "nil")...")
             case "user_name":
                 userName = item.value
                 print("👤 找到用户名: \(userName ?? "nil")")
@@ -220,10 +240,16 @@ class AppState: ObservableObject {
         // 更新登录状态
         DispatchQueue.main.async {
             self.authToken = authToken
+            self.refreshToken = refreshTokenValue // 可能为nil，这是正常的
             self.userInfo = user
             self.isLoggedIn = true
             
             print("✅ 登录成功: \(user.name)")
+            if refreshTokenValue != nil {
+                print("🔄 已保存refresh token")
+            } else {
+                print("⚠️ 未收到refresh token，将无法自动刷新")
+            }
             print("🔄 更新UI状态...")
             
             // 保存登录状态到本地
@@ -238,6 +264,7 @@ class AppState: ObservableObject {
         DispatchQueue.main.async {
             self.isLoggedIn = false
             self.authToken = nil
+            self.refreshToken = nil
             self.userInfo = nil
             
             // 清除本地保存的登录状态
@@ -250,17 +277,59 @@ class AppState: ObservableObject {
         return isOnlineMode && !isLoggedIn
     }
     
+    // 检查是否有可用的refresh token
+    var hasRefreshToken: Bool {
+        return refreshToken != nil && !refreshToken!.isEmpty
+    }
+    
+    // 刷新访问令牌
+    func refreshAccessToken(completion: @escaping (Bool) -> Void) {
+        guard let refreshToken = refreshToken, !refreshToken.isEmpty else {
+            print("❌ 没有refresh token，无法刷新")
+            completion(false)
+            return
+        }
+        
+        print("🔄 尝试使用refresh token刷新access token")
+        
+        // 调用ServerManager的刷新方法
+        ServerManager.shared.refreshToken(refreshToken: refreshToken) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let tokens):
+                    print("✅ Token刷新成功")
+                    self?.authToken = tokens["access_token"] as? String
+                    if let newRefreshToken = tokens["refresh_token"] as? String {
+                        self?.refreshToken = newRefreshToken
+                        print("🔄 同时更新了refresh token")
+                    }
+                    self?.saveAuthState()
+                    completion(true)
+                    
+                case .failure(let error):
+                    print("❌ Token刷新失败: \(error.localizedDescription)")
+                    // 刷新失败，可能refresh token也过期了，需要重新登录
+                    self?.logout()
+                    completion(false)
+                }
+            }
+        }
+    }
+    
     // MARK: - 本地存储
     
     private func saveAuthState() {
         guard let token = authToken, let user = userInfo else { return }
         
         UserDefaults.standard.set(token, forKey: "InstaGo.AuthToken")
+        if let refreshToken = refreshToken {
+            UserDefaults.standard.set(refreshToken, forKey: "InstaGo.RefreshToken")
+        }
         UserDefaults.standard.set(user.id, forKey: "InstaGo.UserID")
         UserDefaults.standard.set(user.name, forKey: "InstaGo.UserName")
         UserDefaults.standard.set(user.email, forKey: "InstaGo.UserEmail")
         
-        print("💾 登录状态已保存")
+        print("💾 登录状态已保存 (含\(refreshToken != nil ? "" : "不含")refresh token)")
     }
     
     private func loadSavedAuthState() {
@@ -273,14 +342,16 @@ class AppState: ObservableObject {
         }
         
         authToken = token
+        refreshToken = UserDefaults.standard.string(forKey: "InstaGo.RefreshToken") // 可能为nil
         userInfo = UserInfo(id: userId, name: userName, email: userEmail)
         isLoggedIn = true
         
-        print("📱 已恢复登录状态: \(userName)")
+        print("📱 已恢复登录状态: \(userName) (含\(refreshToken != nil ? "" : "不含")refresh token)")
     }
     
     private func clearSavedAuthState() {
         UserDefaults.standard.removeObject(forKey: "InstaGo.AuthToken")
+        UserDefaults.standard.removeObject(forKey: "InstaGo.RefreshToken")
         UserDefaults.standard.removeObject(forKey: "InstaGo.UserID")
         UserDefaults.standard.removeObject(forKey: "InstaGo.UserName")
         UserDefaults.standard.removeObject(forKey: "InstaGo.UserEmail")
@@ -311,6 +382,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
         )
+        
+        // 确保 FloatingPanelManager 单例被创建，这样通知监听器就会被设置
+        _ = FloatingPanelManager.shared
+        print("🏗️ FloatingPanelManager 单例已创建")
         
         // 启动服务器
         ServerManager.shared.applicationDidFinishLaunching()

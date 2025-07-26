@@ -542,15 +542,19 @@ extension ServerManager {
         }.resume()
     }
     
-    // 在线 API 上传
+    // 在线 API 上传（带自动token刷新）
     func uploadImageToOnline(imageData: Data, label: String, authToken: String? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) {
-        let uploadURL = URL(string: "https://82540c0ac675.ngrok-free.app/api/v1/screenshot")!
+        uploadImageToOnlineInternal(imageData: imageData, label: label, authToken: authToken, isRetry: false, completion: completion)
+    }
+    
+    // 内部在线 API 上传方法
+    private func uploadImageToOnlineInternal(imageData: Data, label: String, authToken: String? = nil, isRetry: Bool = false, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        let uploadURL = URL(string: "https://instago-server-fbtibvhmga-uc.a.run.app/api/v1/screenshot")!
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "POST"
         
         // 设置请求头
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "ngrok-skip-browser-warning")
         
         // 添加认证token（必须有）
         guard let token = authToken, !token.isEmpty else {
@@ -600,8 +604,40 @@ extension ServerManager {
                 if let httpResponse = response as? HTTPURLResponse {
                     print("📡 在线 API 响应状态码: \(httpResponse.statusCode)")
                     
-                    // 如果是 401 未授权，说明token有问题
-                    if httpResponse.statusCode == 401 {
+                    // 如果是 401 未授权，尝试刷新token（仅第一次）
+                    if httpResponse.statusCode == 401 && !isRetry {
+                        print("🔄 Access token可能已过期，尝试自动刷新...")
+                        
+                        // 寻找AppState实例进行token刷新
+                        DispatchQueue.main.async {
+                            // 通过通知中心请求token刷新
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("RequestTokenRefresh"),
+                                object: nil,
+                                userInfo: [
+                                    "completion": { (success: Bool, newToken: String?) in
+                                        if success, let newAuthToken = newToken {
+                                            print("✅ Token刷新成功，重试上传")
+                                            // 使用新token重试上传
+                                            self.uploadImageToOnlineInternal(
+                                                imageData: imageData,
+                                                label: label,
+                                                authToken: newAuthToken,
+                                                isRetry: true,
+                                                completion: completion
+                                            )
+                                        } else {
+                                            print("❌ Token刷新失败，需要重新登录")
+                                            let error = NSError(domain: "ServerManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "认证已过期，请重新登录"])
+                                            completion(.failure(error))
+                                        }
+                                    }
+                                ]
+                            )
+                        }
+                        return
+                    } else if httpResponse.statusCode == 401 && isRetry {
+                        // 重试后仍然401，说明token刷新也失败了
                         let error = NSError(domain: "ServerManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"])
                         completion(.failure(error))
                         return
@@ -675,6 +711,80 @@ extension ServerManager {
                 }
                 
                 completion(.success(json))
+            }
+        }.resume()
+    }
+    
+    // 刷新访问令牌
+    func refreshToken(refreshToken: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        let refreshURL = URL(string: "https://instago-server-fbtibvhmga-uc.a.run.app/api/v1/auth/refresh")!
+        var request = URLRequest(url: refreshURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody: [String: Any] = [
+            "refresh_token": refreshToken
+        ]
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+            request.httpBody = jsonData
+        } catch {
+            print("❌ 刷新Token JSON序列化失败: \(error.localizedDescription)")
+            completion(.failure(error))
+            return
+        }
+        
+        // 设置超时时间
+        request.timeoutInterval = 15.0
+        
+        print("🔄 发送Token刷新请求到: \(refreshURL)")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Token刷新网络错误: \(error.localizedDescription)")
+                    completion(.failure(error))
+                    return
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("📡 Token刷新响应状态码: \(httpResponse.statusCode)")
+                    
+                    // 如果refresh token也过期或无效
+                    if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                        let error = NSError(domain: "ServerManager", code: 9, userInfo: [NSLocalizedDescriptionKey: "Refresh token已过期，需要重新登录"])
+                        completion(.failure(error))
+                        return
+                    }
+                    
+                    // 其他错误状态码
+                    if httpResponse.statusCode != 200 {
+                        let error = NSError(domain: "ServerManager", code: 10, userInfo: [NSLocalizedDescriptionKey: "Token刷新失败，状态码: \(httpResponse.statusCode)"])
+                        completion(.failure(error))
+                        return
+                    }
+                }
+                
+                guard let data = data else {
+                    completion(.failure(NSError(domain: "ServerManager", code: 11, userInfo: [NSLocalizedDescriptionKey: "Token刷新无响应数据"])))
+                    return
+                }
+                
+                // 尝试解析 JSON 响应
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        print("✅ Token刷新成功: \(json.keys)")
+                        completion(.success(json))
+                    } else {
+                        let responseString = String(data: data, encoding: .utf8) ?? "无法解析响应"
+                        print("⚠️ Token刷新响应格式异常: \(responseString)")
+                        completion(.failure(NSError(domain: "ServerManager", code: 12, userInfo: [NSLocalizedDescriptionKey: "Token刷新响应格式异常"])))
+                    }
+                } catch {
+                    print("❌ Token刷新响应解析失败: \(error.localizedDescription)")
+                    completion(.failure(NSError(domain: "ServerManager", code: 13, userInfo: [NSLocalizedDescriptionKey: "Token刷新响应解析失败"])))
+                }
             }
         }.resume()
     }

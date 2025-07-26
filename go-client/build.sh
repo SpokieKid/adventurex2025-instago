@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # InstaGo 服务端构建脚本
-# 编译Go服务端为macOS可执行文件
+# 编译Go服务端为macOS可执行文件，优化用于代码签名
 
 set -e
 
@@ -31,9 +31,15 @@ else
     echo "💻 编译目标: Intel (amd64)"
 fi
 
-# 编译Go程序
+# 编译Go程序 - 优化用于代码签名
 echo "⚙️ 编译Go服务端..."
-go build -ldflags "-s -w" -o "$OUTPUT_DIR/$OUTPUT_FILE" .
+
+# 使用优化的编译标志，确保与代码签名兼容
+go build \
+    -ldflags "-s -w -extldflags=-Wl,-headerpad_max_install_names" \
+    -trimpath \
+    -buildmode=exe \
+    -o "$OUTPUT_DIR/$OUTPUT_FILE" .
 
 # 检查编译结果
 if [ -f "$OUTPUT_DIR/$OUTPUT_FILE" ]; then
@@ -47,9 +53,18 @@ if [ -f "$OUTPUT_DIR/$OUTPUT_FILE" ]; then
     chmod +x "$OUTPUT_DIR/$OUTPUT_FILE"
     echo "🔐 已设置执行权限"
     
+    # 检查当前签名状态
+    echo "🔍 检查编译结果的签名状态..."
+    codesign --display --verbose=4 "$OUTPUT_DIR/$OUTPUT_FILE" || echo "⚠️ 当前无签名（正常，将在后续步骤中签名）"
+    
 else
     echo "❌ 编译失败！"
     exit 1
 fi
 
-echo "🎉 构建完成！服务端可执行文件已准备好打包到Swift应用中。" 
+echo ""
+echo "🎉 构建完成！"
+echo "📝 下一步："
+echo "   1. 运行代码签名脚本以添加 Hardened Runtime"
+echo "   2. 或直接运行 build_signed_dmg.sh 进行完整的签名和打包"
+echo "" 
