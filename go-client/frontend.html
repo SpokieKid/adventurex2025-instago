@@ -832,9 +832,13 @@
             }
             
             .search-sidebar {
-            width: 100%;
-            right: -100%;
-        }
+                width: 100%;
+                right: -100%;
+            }
+            
+            .search-sidebar.open {
+                right: 0;
+            }
     }
     
     /* 文件夹操作弹窗样式 */
@@ -1316,6 +1320,10 @@
         // 加载文件内容
         function loadFileContent(file) {
             console.log('loadFileContent called with file:', file);
+            
+            // 设置当前文件到全局变量，供loadRelatedImages使用
+            window.currentFile = file;
+            
             const contentArea = document.getElementById('contentArea');
             const welcomeScreen = document.getElementById('welcomeScreen');
             
@@ -1428,12 +1436,7 @@
                 
                 ${imageHtml}
                 
-                <div style="background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 8px; margin-top: 20px;">
-                    <h3>📝 详细描述</h3>
-                    <div style="background: rgba(255, 255, 255, 0.03); padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #e0e0e0;">
-                        ${plainDescription}
-                    </div>
-                </div>
+
             `;
             
             if (contentArea) {
@@ -1598,19 +1601,34 @@ def threeSum(nums):
             if (!imagesGrid) return;
             
             try {
-                // 调用API获取文件相关的图片
-                const response = await fetch(`/folder/${fileId}`);
+                // 获取当前文件所在的文件夹ID
+                const currentFile = getCurrentFile();
+                if (!currentFile || !currentFile.folder_id) {
+                    imagesGrid.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1 / -1;">
+                            <p>📷 暂无相关图片</p>
+                            <p>无法确定文件所在文件夹</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // 调用API获取文件夹中的所有图片
+                const response = await fetch(`/folder/${currentFile.folder_id}`);
                 if (response.ok) {
                     const data = await response.json();
-                    const images = data.objects || [];
+                    const allImages = data.objects || [];
                     
-                    if (images.length > 0) {
-                        renderImages(images);
+                    // 过滤掉当前文件，只显示其他相关图片
+                    const relatedImages = allImages.filter(img => img.id !== fileId);
+                    
+                    if (relatedImages.length > 0) {
+                        renderImages(relatedImages);
                     } else {
                         imagesGrid.innerHTML = `
                             <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1 / -1;">
                                 <p>📷 暂无相关图片</p>
-                                <p>该文件没有关联的图片内容</p>
+                                <p>该文件夹中没有其他图片内容</p>
                             </div>
                         `;
                     }
@@ -1631,6 +1649,12 @@ def threeSum(nums):
                     </div>
                 `;
             }
+        }
+        
+        // 获取当前显示的文件信息
+        function getCurrentFile() {
+            // 从全局变量或当前显示的内容中获取文件信息
+            return window.currentFile || null;
         }
 
         // 渲染图片
@@ -1786,7 +1810,7 @@ def threeSum(nums):
                     },
                     body: JSON.stringify({
                         query: query,
-                        limit: 10
+                        limit: 2
                     })
                 });
                 
@@ -2055,10 +2079,18 @@ def threeSum(nums):
             
             // 根据结果跳转到对应的文件夹或文件
             if (result.folder_id) {
+                // 先选择文件夹
                 selectFolder(result.folder_id);
+                
+                // 延迟一下再显示文件内容，确保文件夹已选中
+                setTimeout(() => {
+                    loadFileContent(result);
+                }, 100);
+            } else {
+                // 如果没有文件夹信息，直接显示文件内容
+                loadFileContent(result);
             }
             
-            // 可以添加更多跳转逻辑
             console.log('跳转到内容:', result);
         }
         

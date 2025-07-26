@@ -24,11 +24,12 @@ type Folder struct {
 }
 
 type Object struct {
-	ID          int    `json:"id" db:"id"`
-	Name        string `json:"name" db:"name"`
-	Data        string `json:"data" db:"data"`
-	Description string `json:"description" db:"description"`
-	FolderID    int    `json:"folder_id" db:"folder_id"`
+	ID           int    `json:"id" db:"id"`
+	Name         string `json:"name" db:"name"`
+	Data         string `json:"data" db:"data"`
+	Description  string `json:"description" db:"description"`
+	FolderID     int    `json:"folder_id" db:"folder_id"`
+	PossibleFrom string `json:"possible_from" db:"possible_from"`
 }
 
 // API请求/响应结构
@@ -115,7 +116,8 @@ func initDB() error {
 		name TEXT NOT NULL,
 		data TEXT NOT NULL,
 		description TEXT NOT NULL,
-		folder_id INTEGER DEFAULT 0
+		folder_id INTEGER DEFAULT 0,
+		possible_from TEXT
 	);
 	`
 
@@ -172,10 +174,6 @@ func initVectorDB() error {
 	return nil
 }
 
-
-
-
-
 // 上传图片处理器
 func uploadHandler(c *gin.Context) {
 	var req UploadRequest
@@ -196,7 +194,7 @@ func uploadHandler(c *gin.Context) {
 	}
 
 	// 调用千问视觉模型分析图片
-	description, err := analyzeImageWithQwenVL(req.ScreenshotFileBlob)
+	description, err := analyzeImageWithQwenVL(req)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to analyze image: %v", err)})
 		return
@@ -210,14 +208,14 @@ func uploadHandler(c *gin.Context) {
 	}
 
 	// 使用千问文本模型生成多维度搜索内容
-	searchContent, err := processWithQwenText(description, folderTree, 0)
+	searchContent, err := processWithQwenText(description, folderTree)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to process with text model: %v", err)})
 		return
 	}
-
+	possibleFrom := fmt.Sprintf("possible_from: %s , %s", searchContent.FromSite, searchContent.OriginContent)
 	// 创建Object并存储到数据库
-	objectID, err := createObject(searchContent.Name, req.ScreenshotFileBlob, description, searchContent.FolderID)
+	objectID, err := createObject(searchContent.Name, req.ScreenshotFileBlob, description, searchContent.FolderID, possibleFrom)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create object: %v", err)})
 		return
@@ -237,6 +235,7 @@ func uploadHandler(c *gin.Context) {
 		"screenshot_timestamp": req.ScreenshotTimestamp,
 		"screenshot_app_name":  req.ScreenshotAppName,
 		"screenshot_tags":      req.ScreenshotTags,
+		"possibleFrom":         possibleFrom,
 	})
 }
 
@@ -254,8 +253,15 @@ func searchHandler(c *gin.Context) {
 	}
 
 	if req.Limit <= 0 {
-		req.Limit = 10
+		req.Limit = 3
 	}
+	// 使用Ollama标准化查询
+	//standardizedQuery, err := standardizeQueryWithOllama(req.Query)
+	//if err != nil {
+	//	fmt.Printf("查询标准化失败，使用原查询: %v\n", err)
+	//	standardizedQuery = req.Query
+	//}
+	standardizedQuery := req.Query
 
 	// 检查集合中的文档数量，避免请求数量超过实际文档数量
 	ctx := context.Background()
@@ -281,7 +287,7 @@ func searchHandler(c *gin.Context) {
 	}
 
 	// 在向量数据库中搜索
-	results, err := collection.Query(ctx, req.Query, queryLimit, nil, nil)
+	results, err := collection.Query(ctx, standardizedQuery, queryLimit, nil, nil)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to search: %v", err)})
 		return
@@ -327,12 +333,12 @@ func searchHandler(c *gin.Context) {
 		}
 
 		objectMap[objectID] = &gin.H{
-			"object_id":    obj.ID,
-			"name":         obj.Name,
-			"description":  obj.Description,
-			"folder_id":    obj.FolderID,
-			"similarity":   result.Similarity,
-			"file_content": obj.Data,
+			"id":          obj.ID,
+			"name":        obj.Name,
+			"description": obj.Description,
+			"folder_id":   obj.FolderID,
+			"similarity":  result.Similarity,
+			"data":        obj.Data,
 		}
 	}
 
@@ -459,7 +465,7 @@ func main() {
 		QwenTextAPIKey: getEnv("QWEN_TEXT_API_KEY", ""),
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
 		DBPath:         getEnv("DB_PATH", "./instago.db"),
-		Port:           getEnv("PORT", "8080"),
+		Port:           getEnv("PORT", "19200"),
 	}
 
 	// 初始化数据库

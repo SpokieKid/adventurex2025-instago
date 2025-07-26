@@ -48,7 +48,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 DB_PATH=./instago.db
 
 # 服务器配置
-PORT=8080
+PORT=19200
 ```
 
 ### 2. 编译和运行
@@ -60,7 +60,7 @@ go build -o instago
 ./instago
 ```
 
-服务器将在 `http://localhost:8080` 启动。
+服务器将在 `http://localhost:19200` 启动。
 
 ### 3. 测试功能
 

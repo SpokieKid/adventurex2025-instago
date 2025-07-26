@@ -37,6 +37,7 @@ volumes:
 ```bash
 # 拉取推荐的嵌入模型
 docker exec instago-ollama ollama pull nomic-embed-text
+#docker exec instago-ollama ollama pull qwen2:0.5b
 ```
 
 ### 3. 测试嵌入服务
