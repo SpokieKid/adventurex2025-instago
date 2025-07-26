@@ -30,7 +30,7 @@ class AppState: ObservableObject {
     @Published var imageLabel = "" // 图片标签文字
     @Published var isFloatingWindowExpanded = false // 悬浮窗是否展开
     @Published var isFloatingWindowSelected = false // 悬浮窗是否被选中
-    @Published var isOnlineMode = false // 是否为在线模式，默认为本地模式
+    @Published var isOnlineMode = true // 是否为在线模式，默认为在线模式
     
     // 用户认证相关
     @Published var isLoggedIn = false // 用户是否已登录
@@ -38,8 +38,8 @@ class AppState: ObservableObject {
     @Published var authToken: String? = nil // 认证token
     
     // 在线 API 地址
-    let onlineAPIURL = "https://82540c0ac675.ngrok-free.app/api/v1/screenshot"
-    let loginWebURL = "http://localhost:3000/login" // 登录页面地址
+          let onlineAPIURL = "https://instago-manage.vercel.app/api/v1/screenshot"
+    let loginWebURL = "https://instago-manage.vercel.app/login" // 登录页面地址
     
     init() {
         // 延迟发送初始化通知
@@ -50,6 +50,18 @@ class AppState: ObservableObject {
         
         // 尝试从本地恢复登录状态
         loadSavedAuthState()
+        
+        // 检查是否需要登录，如果是在线模式且未登录，自动启动登录流程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if self.requiresLogin {
+                print("🔐 检测到在线模式且未登录，自动启动登录流程")
+                self.startLoginFlow()
+            } else if self.isOnlineMode && self.isLoggedIn {
+                print("✅ 在线模式，用户已登录: \(self.userInfo?.name ?? "未知用户")")
+            } else {
+                print("ℹ️ 本地模式，无需登录")
+            }
+        }
         
         // 监听登录回调通知
         NotificationCenter.default.addObserver(

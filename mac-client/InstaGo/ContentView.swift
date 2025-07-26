@@ -9,6 +9,10 @@ import SwiftUI
 import Vision
 import UniformTypeIdentifiers
 import Network
+import CoreGraphics
+import Quartz
+import Carbon
+import ScreenCaptureKit
 #if os(macOS)
 import AppKit
 #endif
@@ -138,6 +142,19 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
             
+            // 截图功能按钮
+            Button(action: {
+                ScreenshotManager.shared.startScreenshot()
+            }) {
+                HStack {
+                    Image(systemName: "camera.viewfinder")
+                    Text("截图上传")
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.purple)
+            .help("或按 Cmd+Shift+X")
+            
             // 调试按钮
             Button(action: {
                 createTestWindow()
@@ -176,6 +193,11 @@ struct MenuBarContent: View {
             if !hasInitialized {
                 print("🔧 MenuBarContent手动初始化FloatingPanelManager")
                 FloatingPanelManager.shared.initializeDirect(with: appState)
+                
+                // 初始化截图管理器
+                print("🔧 MenuBarContent初始化ScreenshotManager")
+                ScreenshotManager.shared.initialize(with: appState)
+                
                 hasInitialized = true
             }
         }
@@ -317,6 +339,526 @@ class FloatingWindow: NSWindow {
         }
         super.sendEvent(event)
     }
+}
+
+// 截图选择窗口
+class ScreenshotSelectionWindow: NSWindow {
+    private var startPoint: CGPoint = .zero
+    private var currentPoint: CGPoint = .zero
+    private var isDragging = false
+    private var onScreenshotTaken: ((CGRect) -> Void)?
+    
+    init(onScreenshotTaken: @escaping (CGRect) -> Void) {
+        self.onScreenshotTaken = onScreenshotTaken
+        
+        // 获取所有屏幕的联合区域
+        let combinedFrame = NSScreen.screens.reduce(CGRect.zero) { result, screen in
+            return result.union(screen.frame)
+        }
+        
+        super.init(
+            contentRect: combinedFrame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        
+        setupWindow()
+    }
+    
+    private func setupWindow() {
+        self.level = .screenSaver  // 最高级别，覆盖所有其他窗口
+        self.backgroundColor = NSColor.black.withAlphaComponent(0.3)  // 半透明遮罩
+        self.isOpaque = false
+        self.hasShadow = false
+        self.ignoresMouseEvents = false
+        self.acceptsMouseMovedEvents = true
+        
+        // 设置内容视图
+        let contentView = ScreenshotSelectionView()
+        contentView.screenshotWindow = self
+        self.contentView = contentView
+        
+        // 添加键盘监听（ESC取消）
+        NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            if event.keyCode == 53 { // ESC key
+                self?.cancelScreenshot()
+                return nil
+            }
+            return event
+        }
+        
+        print("📸 截图选择窗口已创建，覆盖区域: \(self.frame)")
+    }
+    
+    override var canBecomeKey: Bool {
+        return true
+    }
+    
+    override var canBecomeMain: Bool {
+        return true
+    }
+    
+    private func cancelScreenshot() {
+        print("❌ 用户取消截图")
+        self.close()
+    }
+    
+    func takeScreenshot(in rect: CGRect) {
+        print("📸 执行截图，区域: \(rect)")
+        onScreenshotTaken?(rect)
+        self.close()
+    }
+}
+
+// 截图选择视图
+class ScreenshotSelectionView: NSView {
+    weak var screenshotWindow: ScreenshotSelectionWindow?
+    private var startPoint: CGPoint = .zero
+    private var endPoint: CGPoint = .zero
+    private var isDragging = false
+    private var selectionRect: CGRect = .zero
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupView()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+    
+    private func setupView() {
+        self.wantsLayer = true
+        
+        // 添加指导文字
+        let instructionLabel = NSTextField(labelWithString: "拖动鼠标选择截图区域，按 ESC 取消")
+        instructionLabel.textColor = .white
+        instructionLabel.font = NSFont.systemFont(ofSize: 18, weight: .medium)
+        instructionLabel.backgroundColor = NSColor.black.withAlphaComponent(0.7)
+        instructionLabel.drawsBackground = true
+        instructionLabel.alignment = .center
+        instructionLabel.layer?.cornerRadius = 8
+        
+        // 居中显示
+        let labelSize = instructionLabel.intrinsicContentSize
+        let screenCenter = self.bounds.center
+        instructionLabel.frame = CGRect(
+            x: screenCenter.x - labelSize.width / 2,
+            y: screenCenter.y + 50,
+            width: labelSize.width + 20,
+            height: labelSize.height + 10
+        )
+        
+        self.addSubview(instructionLabel)
+        
+        // 2秒后隐藏提示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            instructionLabel.removeFromSuperview()
+        }
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        startPoint = convert(event.locationInWindow, from: nil)
+        endPoint = startPoint
+        isDragging = true
+        needsDisplay = true
+        print("🖱️ 开始选择截图区域: \(startPoint)")
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging else { return }
+        endPoint = convert(event.locationInWindow, from: nil)
+        selectionRect = CGRect(
+            x: min(startPoint.x, endPoint.x),
+            y: min(startPoint.y, endPoint.y),
+            width: abs(endPoint.x - startPoint.x),
+            height: abs(endPoint.y - startPoint.y)
+        )
+        needsDisplay = true
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        
+        if selectionRect.width > 10 && selectionRect.height > 10 {
+            // 转换为屏幕坐标
+            let windowRect = screenshotWindow?.convertToScreen(selectionRect) ?? selectionRect
+            let flippedRect = CGRect(
+                x: windowRect.origin.x,
+                y: NSScreen.main?.frame.height ?? 0 - windowRect.origin.y - windowRect.height,
+                width: windowRect.width,
+                height: windowRect.height
+            )
+            
+            print("📸 截图区域选择完成: \(flippedRect)")
+            screenshotWindow?.takeScreenshot(in: flippedRect)
+        } else {
+            print("⚠️ 选择区域太小，取消截图")
+            screenshotWindow?.close()
+        }
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        
+        // 绘制选择区域
+        if isDragging && selectionRect.width > 0 && selectionRect.height > 0 {
+            // 绘制选择框
+            NSColor.blue.withAlphaComponent(0.3).setFill()
+            selectionRect.fill()
+            
+            // 绘制边框
+            NSColor.blue.setStroke()
+            let borderPath = NSBezierPath(rect: selectionRect)
+            borderPath.lineWidth = 2
+            borderPath.stroke()
+            
+            // 绘制尺寸信息
+            let sizeText = "\(Int(selectionRect.width)) × \(Int(selectionRect.height))"
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.white,
+                .backgroundColor: NSColor.black.withAlphaComponent(0.7)
+            ]
+            
+            let attributedString = NSAttributedString(string: sizeText, attributes: attributes)
+            let textRect = CGRect(
+                x: selectionRect.maxX - 80,
+                y: selectionRect.minY - 20,
+                width: 80,
+                height: 20
+            )
+            attributedString.draw(in: textRect)
+        }
+    }
+}
+
+// 截图管理器
+class ScreenshotManager: ObservableObject {
+    static let shared = ScreenshotManager()
+    private var screenshotWindow: ScreenshotSelectionWindow?
+    private var globalHotKeyRef: EventHotKeyRef?
+    private weak var appState: AppState?
+    
+    private init() {
+        print("📸 截图管理器初始化")
+    }
+    
+    func initialize(with appState: AppState) {
+        self.appState = appState
+        setupGlobalHotKey()
+        print("📸 截图管理器已初始化")
+    }
+    
+    private func setupGlobalHotKey() {
+        // 移除之前的热键
+        if let hotKeyRef = globalHotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+        }
+        
+        // 注册 Cmd+Shift+X 热键
+        var hotKeyID = EventHotKeyID()
+        hotKeyID.signature = fourCharCodeFrom("SSHT")  // Screenshot的缩写
+        hotKeyID.id = UInt32(1)
+        
+        // Cmd+Shift+X 的组合键
+        let modifiers = UInt32(cmdKey | shiftKey)
+        let keyCode = UInt32(7)  // X 键的键码
+        
+        var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        
+        // 安装事件处理器
+        InstallEventHandler(GetApplicationEventTarget(), { (nextHandler, theEvent, userData) -> OSStatus in
+            // 检查是否是我们的热键
+            var hotKeyID = EventHotKeyID()
+            GetEventParameter(theEvent, OSType(kEventParamDirectObject), OSType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+            
+            if hotKeyID.signature == fourCharCodeFrom("SSHT") && hotKeyID.id == 1 {
+                DispatchQueue.main.async {
+                    ScreenshotManager.shared.startScreenshot()
+                }
+                return noErr
+            }
+            
+            return CallNextEventHandler(nextHandler, theEvent)
+        }, 1, &eventSpec, nil, nil)
+        
+        // 注册热键
+        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &globalHotKeyRef)
+        
+        if status == noErr {
+            print("✅ 全局热键 Cmd+Shift+X 注册成功")
+        } else {
+            print("❌ 热键注册失败，状态码: \(status)")
+        }
+    }
+    
+    func startScreenshot() {
+        print("📸 启动截图模式")
+        
+        guard appState != nil else {
+            print("❌ AppState 未初始化")
+            return
+        }
+        
+        // 检查屏幕录制权限
+        if !checkScreenRecordingPermission() {
+            print("❌ 没有屏幕录制权限")
+            showPermissionAlert()
+            return
+        }
+        
+        // 创建截图选择窗口
+        screenshotWindow = ScreenshotSelectionWindow { [weak self] rect in
+            self?.captureScreenshot(in: rect)
+        }
+        
+        // 显示窗口
+        screenshotWindow?.makeKeyAndOrderFront(nil)
+        screenshotWindow?.orderFrontRegardless()
+        
+        print("📸 截图选择窗口已显示")
+    }
+    
+    private func checkScreenRecordingPermission() -> Bool {
+        if #available(macOS 12.3, *) {
+            // 使用 ScreenCaptureKit 检查权限
+            // 权限检查会在第一次尝试捕获时进行
+            return true
+        } else {
+            // macOS 12.3 以下版本不支持 ScreenCaptureKit
+            return false
+        }
+    }
+    
+    private func showPermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "需要屏幕录制权限"
+        alert.informativeText = "InstaGo 需要屏幕录制权限来执行截图功能。请在系统设置中授予权限。"
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // 打开系统设置
+            if #available(macOS 13.0, *) {
+                // macOS 13+ 使用新的设置URL
+                if let url = URL(string: "x-apple.systempreferences:com.apple.ScreenTime-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            } else {
+                // macOS 12.x 使用旧的偏好设置URL
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+    }
+    
+    private func captureScreenshot(in rect: CGRect) {
+        print("📸 开始截图，区域: \(rect)")
+        
+        if #available(macOS 12.3, *) {
+            // 使用 ScreenCaptureKit 进行截图
+            captureWithScreenCaptureKit(in: rect)
+        } else {
+            print("❌ 系统版本过低，需要 macOS 12.3+")
+            showToastMessage("需要 macOS 12.3 或更高版本")
+        }
+    }
+    
+    @available(macOS 12.3, *)
+    private func captureWithScreenCaptureKit(in rect: CGRect) {
+        Task {
+            do {
+                // 获取可用的屏幕内容
+                let availableContent = try await SCShareableContent.current
+                
+                // 找到包含截图区域的显示器
+                guard let display = findDisplayForRect(rect, in: availableContent.displays) else {
+                    await MainActor.run {
+                        print("❌ 找不到对应的显示器")
+                        showToastMessage("找不到对应的显示器")
+                    }
+                    return
+                }
+                
+                // 配置截图参数
+                let config = SCStreamConfiguration()
+                config.width = Int(rect.width)
+                config.height = Int(rect.height)
+                config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+                config.pixelFormat = kCVPixelFormatType_32BGRA
+                config.showsCursor = false
+                
+                // 设置截图区域 (相对于显示器坐标)
+                let displayBounds = display.frame
+                let relativeRect = CGRect(
+                    x: rect.origin.x - displayBounds.origin.x,
+                    y: rect.origin.y - displayBounds.origin.y,
+                    width: rect.width,
+                    height: rect.height
+                )
+                config.sourceRect = relativeRect
+                
+                print("📸 显示器边界: \(displayBounds)")
+                print("📸 相对截图区域: \(relativeRect)")
+                
+                // 创建截图过滤器
+                let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+                
+                // 执行截图
+                let image = try await SCScreenshotManager.captureImage(
+                    contentFilter: filter,
+                    configuration: config
+                )
+                
+                await MainActor.run {
+                    self.processScreenshotImage(image)
+                }
+                
+            } catch {
+                await MainActor.run {
+                    print("❌ ScreenCaptureKit 截图失败: \(error.localizedDescription)")
+                    if let scError = error as? SCStreamError {
+                        self.handleScreenCaptureError(scError)
+                    } else {
+                        self.showToastMessage("截图失败: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+    }
+    
+    @available(macOS 12.3, *)
+    private func findDisplayForRect(_ rect: CGRect, in displays: [SCDisplay]) -> SCDisplay? {
+        // 找到与指定矩形区域重叠最多的显示器
+        var bestDisplay: SCDisplay?
+        var maxIntersectionArea: CGFloat = 0
+        
+        for display in displays {
+            let displayFrame = display.frame
+            let intersection = rect.intersection(displayFrame)
+            let intersectionArea = intersection.width * intersection.height
+            
+            if intersectionArea > maxIntersectionArea {
+                maxIntersectionArea = intersectionArea
+                bestDisplay = display
+            }
+        }
+        
+        return bestDisplay
+    }
+    
+    @available(macOS 12.3, *)
+    private func handleScreenCaptureError(_ error: SCStreamError) {
+        switch error.code {
+        case .userDeclined:
+            showToastMessage("用户拒绝了屏幕录制权限")
+            showPermissionAlert()
+        case .userStopped:
+            showToastMessage("用户停止了屏幕录制")
+        case .failedToStart:
+            showToastMessage("无法启动屏幕捕获")
+        case .missingEntitlements:
+            showToastMessage("应用缺少必要的权限")
+        default:
+            showToastMessage("截图失败: \(error.localizedDescription)")
+        }
+    }
+    
+    private func processScreenshotImage(_ cgImage: CGImage) {
+        print("✅ ScreenCaptureKit 截图成功")
+        
+        // 转换为NSImage
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        
+        // 转换为JPEG数据
+        guard let tiffData = nsImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let jpegData = bitmapRep.representation(using: NSBitmapImageRep.FileType.jpeg, properties: [:]) else {
+            print("❌ 图片转换失败")
+            showToastMessage("图片处理失败")
+            return
+        }
+        
+        print("✅ 截图处理完成，大小: \(jpegData.count) 字节")
+        
+        // 上传截图
+        uploadScreenshot(jpegData)
+    }
+    
+
+    
+    private func uploadScreenshot(_ imageData: Data) {
+        guard let appState = appState else {
+            print("❌ AppState 未初始化")
+            return
+        }
+        
+        print("📤 开始上传截图")
+        
+        // 检查在线模式是否需要登录
+        if appState.requiresLogin {
+            showToastMessage("请先登录")
+            return
+        }
+        
+        // 使用现有的智能上传方法
+        ServerManager.shared.smartUploadImage(
+            imageData: imageData,
+            label: appState.imageLabel.isEmpty ? "截图" : appState.imageLabel,  // 如果没有标签就用"截图"
+            isOnlineMode: appState.isOnlineMode,
+            authToken: appState.authToken
+        ) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let response):
+                    print("✅ 截图上传成功: \(response)")
+                    self.showToastMessage(appState.isOnlineMode ? "截图在线上传成功" : "截图本地上传成功")
+                    
+                case .failure(let error):
+                    print("❌ 截图上传失败: \(error.localizedDescription)")
+                    let errorMessage = appState.isOnlineMode ? "截图在线上传失败" : "截图本地上传失败"
+                    self.showToastMessage("\(errorMessage): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    private func showToastMessage(_ message: String) {
+        // 发送通知给悬浮窗显示Toast
+        NotificationCenter.default.post(
+            name: NSNotification.Name("ShowToastMessage"),
+            object: message
+        )
+    }
+    
+    deinit {
+        if let hotKeyRef = globalHotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+        }
+    }
+}
+
+// 扩展CGRect以支持center属性
+extension CGRect {
+    var center: CGPoint {
+        return CGPoint(x: midX, y: midY)
+    }
+}
+
+// 扩展用于四字符代码转换
+func fourCharCodeFrom(_ string: String) -> FourCharCode {
+    assert(string.count == 4, "String length must be 4")
+    var result: FourCharCode = 0
+    for char in string.utf8 {
+        result = result << 8 + FourCharCode(char)
+    }
+    return result
 }
 
 // 悬浮窗管理器
@@ -793,6 +1335,7 @@ struct FloatingButtonView: View {
         .onAppear {
             localLabel = appState.imageLabel
             setupKeyboardMonitoring()
+            setupNotificationListeners()
         }
         .onChange(of: appState.imageLabel) { _, newValue in
             localLabel = newValue
@@ -1160,6 +1703,22 @@ struct FloatingButtonView: View {
                 showToast = false
             }
         }
+    }
+    
+    // 设置通知监听器
+    private func setupNotificationListeners() {
+        // 监听截图Toast消息
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ShowToastMessage"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let message = notification.object as? String {
+                self.showToastMessage(message)
+            }
+        }
+        
+        print("📡 悬浮窗通知监听器已设置")
     }
     
     private var circleButton: some View {
